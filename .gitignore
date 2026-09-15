@@ -1,5 +1,9 @@
 docs/site/
 
+
+/data/
+/output/
+
 # test cache
 manual_test/
 

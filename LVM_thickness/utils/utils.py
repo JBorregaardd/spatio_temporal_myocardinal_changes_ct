@@ -659,7 +659,7 @@ def points_to_mesh(points, save_name=None):
         writer.Write()
     return polydata
 
-import pyvista as pv
+
 import numpy as np
 from scipy.spatial import cKDTree
 

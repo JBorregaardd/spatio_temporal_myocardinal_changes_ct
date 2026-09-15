@@ -95,37 +95,26 @@ def main(root, folder, patient_id, exists_ok=True):
 
 if __name__=="__main__":
 
-    logging.info("Updated version 6")
-
-    # RH, root, folder = path_handler.get_path_and_root()
-    # main(root, folder)
-
-    RH, root, folder = path_handler.get_path_and_root(DATASET_NAME)
-
-    file = "/storage/DTU-CGPS-1/DTU-CGPS-1_meta_data_success_2025-01-05-19-40-53.csv"
     
+    root = r"C:\Users\Jacob pc\vscode_projects\spatio_temporal_myocardinal_changes_ct"       # folder containing 'data'
+    folder = r"data\TotalSegmentator"   # folder containing '1.heart.nii.gz'
 
-    #patient_id = "CGPS-1_0001_SERIES0005"
-    #patient_id = "CGPS-1_0002_SERIES0000"
-    if SCAN_TYPE == "CFA":
-        import pandas as pd
-        splits = utils.read_excel_for_CFA(root, True)
-        splits = pd.concat(splits, ignore_index=True)
+    # 2. Pick the single image ID you want to test
+    test_patient_id = "1"
+
+    # 3. Verify paths before running to avoid silent failures
+    # Adjust this path to match how image_path is defined in your main()
+    expected_img = os.path.join(root, "data", "1-200", "NIFTI", f"{test_patient_id}.img.nii.gz")
+    expected_seg = os.path.join(root, folder, f"{test_patient_id}.heart.nii.gz")
+
+    print(f"Checking files for patient {test_patient_id}:")
+    print(f"  Image:        {expected_img} -> Exists: {os.path.exists(expected_img)}")
+    print(f"  Segmentation: {expected_seg} -> Exists: {os.path.exists(expected_seg)}")
+
+    if not os.path.exists(expected_img) or not os.path.exists(expected_seg):
+        print("\n[ERROR] One or both input files were not found. Please check the paths above before proceeding.")
     else:
-        splits = utils.read_excel_for_best_phase(root, True, get_ES=SCAN_TYPE=="ES", file=file)
-    logging.info(f"number of patients found {len(splits)}")
-    #logging.info(splits.head())
-
-    splits["filename_strip"] = splits["filename"].str.replace(".nii.gz", "", regex=False)
-    patient_id_list = splits["filename_strip"].tolist()
-
-    # patient_id = patient_id_list[0]
-    # main(root, folder, patient_id)
-    # exit(0)
-
-    with multiprocessing.Pool(6) as pool: 
-        process_data_with_common_arg  = partial(main, root, folder)
-
-        for _ in tqdm(pool.imap(process_data_with_common_arg, patient_id_list), total=len(patient_id_list)):
-            pass
-    
+        print("\nFiles found! Running pipeline on single image...")
+        # exists_ok=False forces it to recalculate everything from scratch
+        main(root, folder, test_patient_id, exists_ok=False)
+        print("Done!")

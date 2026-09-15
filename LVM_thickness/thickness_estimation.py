@@ -49,6 +49,16 @@ def create_meshes_from_segmentation(input_path, out_path, save_name="total_seg",
     utils.convert_label_map_to_surface(outer_path, save_outer)
     mesh_inner = utils.read_vtk_mesh(save_inner)
     mesh_outer = utils.read_vtk_mesh(save_outer)
+
+    # Decimate meshes to prevent VTK out-of-memory / OBBTree stack overflow
+    print(f"    [DECIMATE] Simplifying inner mesh from {mesh_inner.GetNumberOfPoints()} points...")
+    mesh_inner = utils.decimate_vtk_mesh(mesh_inner, 30000)
+    utils.write_vtk_mesh(mesh_inner, save_inner)
+
+    print(f"    [DECIMATE] Simplifying outer mesh from {mesh_outer.GetNumberOfPoints()} points...")
+    mesh_outer = utils.decimate_vtk_mesh(mesh_outer, 30000)
+    utils.write_vtk_mesh(mesh_outer, save_outer)
+
     # mesh_inner = utils.segmentation_vtk_to_mesh_vtk(inner_path,  save_name=save_inner)
     # mesh_outer = utils.segmentation_vtk_to_mesh_vtk(outer_path,  save_name=save_outer)
 
@@ -138,7 +148,7 @@ def get_distance_mesh(path, mesh_inner, mesh_outer, save=True):
 
 
 def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num_closest_vectors=20, exists_ok=True):
-
+    print(f"    [ALIGN] Source vertices: {mesh_source.GetNumberOfPoints()}, Target vertices: {mesh_target.GetNumberOfPoints()}")
     # Check if the mesh has already been smoothed
     if os.path.exists(os.path.join(path, "misc", "vectors.npz")) and exists_ok:
         loaded = np.load(os.path.join(path, "misc", "vectors.npz"))
@@ -156,6 +166,7 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
             return vectors
 
     # Find closest point per vertex in target mesh
+    print("    [ALIGN] Finding closest points...")
     locator_target = vtk.vtkPointLocator()
     locator_target.SetDataSet(mesh_target)
     locator_target.BuildLocator()
@@ -189,6 +200,7 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
     locator_source.SetDataSet(mesh_source)
     locator_source.BuildLocator()
     # Repeat smoothing
+    print("    [ALIGN] Smoothing vectors...")
     for iteration in range(num_iterations):
         # Construct a point locator for the smoothed endpoints of the vectors
         mesh_vectors = vtk.vtkPolyData()
@@ -226,27 +238,53 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
         # save_points_to_mesh(path, mesh_source, mesh_vectors, name=f"{iteration+1}", use_source=True)
 
     # trace vectors from source to target
+    print("    [ALIGN] Building OBBTree and tracing ray intersections...")
+
+
+    # Clean the target mesh before building the OBBTree
+    cleaner = vtk.vtkCleanPolyData()
+    cleaner.SetInputData(mesh_target)
+    cleaner.Update()
+    n_before = mesh_target.GetNumberOfPoints()
+    mesh_target = cleaner.GetOutput()
+    print(f"    [CHECK] mesh_target points before clean: {n_before}, after: {mesh_target.GetNumberOfPoints()}")
+    
+
     obbTree = vtk.vtkOBBTree()
     obbTree.SetDataSet(mesh_target)
     obbTree.BuildLocator()
+
     mesh_vectors = vtk.vtkPolyData()
     end_points = vtk.vtkPoints()
-    for i in range(mesh_source.GetNumberOfPoints()):
-        line = vtk.vtkLineSource()
-        line.SetPoint1(mesh_source.GetPoint(i))
-        line.SetPoint2(mesh_source.GetPoint(i) + 2*vectors[i][2])
-        line.Update()
-        intersection_point = vtk.vtkPoints()
-        does_intersect = obbTree.IntersectWithLine(mesh_source.GetPoint(i), 
-                                                   mesh_source.GetPoint(i) + 2*vectors[i][2], 
-                                                   intersection_point, 
-                                                   None)
-        if not does_intersect:
-            end_points.InsertNextPoint(mesh_source.GetPoint(i)+vectors[i][2])
-            continue
-        end_points.InsertNextPoint(intersection_point.GetPoint(0))
-        vec = np.array(intersection_point.GetPoint(0)) - np.array(mesh_source.GetPoint(i))
-        vectors[i] = (i, mesh_source.GetPoint(i), vec)
+
+    # Reuse a single vtkPoints container across iterations
+    intersection_points = vtk.vtkPoints()
+
+    num_source_pts = mesh_source.GetNumberOfPoints()
+
+    for i in range(num_source_pts):
+        if i % 1000 == 0:
+            print(f"    [RAYTRACE] {i}/{num_source_pts}", flush=True)
+        p_start = mesh_source.GetPoint(i)
+        v = vectors[i][2]
+        p_end = (p_start[0] + 2.0 * v[0],
+                 p_start[1] + 2.0 * v[1],
+                 p_start[2] + 2.0 * v[2])
+
+        # Reset container for reuse
+        intersection_points.Reset()
+
+        code = obbTree.IntersectWithLine(p_start, p_end, intersection_points, None)
+
+        if code != 0 and intersection_points.GetNumberOfPoints() > 0:
+            target_pt = intersection_points.GetPoint(0)
+            end_points.InsertNextPoint(target_pt)
+            new_vec = np.array(target_pt) - np.array(p_start)
+            vectors[i] = (i, p_start, new_vec)
+        else:
+            fallback_pt = (p_start[0] + v[0], p_start[1] + v[1], p_start[2] + v[2])
+            end_points.InsertNextPoint(fallback_pt)
+    print("    [ALIGN] Tracing completed. Assigning scalars...")
     mesh_vectors.SetPoints(end_points)
     distance_scalars = vtk.vtkFloatArray()
     distance_scalars.SetNumberOfComponents(1)

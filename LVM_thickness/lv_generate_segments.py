@@ -9,14 +9,13 @@ import json
 from scipy.spatial import KDTree
 from skimage.morphology import binary_dilation
 from scipy.ndimage import center_of_mass
-from platipy.imaging.label.utils import get_com
-from platipy.imaging.utils.crop import crop_to_roi, label_to_roi
-from platipy.imaging.utils.geometry import vector_angle
-from platipy.imaging.utils.valve import generate_valve_using_cylinder
+
 
 from utils import utils
 
 def check_360(thetas, tolerance=0.01):
+    if thetas is None or len(thetas) == 0:
+        return False
     
     ref_array = np.arange(0, 2*np.pi, 2*np.pi/360)
     for i in range(len(ref_array)):
@@ -33,6 +32,55 @@ def get_com_with_z_mask(image, z_mask):
 def get_com_with_z_range(image, lb, ub):
     arr = sitk.GetArrayViewFromImage(image)[lb:ub]
     return center_of_mass(arr)
+
+def get_com(image, real_coords=False):
+    """Beregner center of mass via SimpleITK uden eksterne afhængigheder."""
+    lsf = sitk.LabelShapeStatisticsImageFilter()
+    lsf.Execute(image > 0)
+    if not lsf.GetLabels():
+        return (0.0, 0.0, 0.0)
+    centroid = lsf.GetCentroid(1)  # Fysiske koordinater (x, y, z)
+    if real_coords:
+        return centroid
+    return image.TransformPhysicalPointToContinuousIndex(centroid)
+
+def vector_angle(v1, v2):
+    """Beregner vinklen mellem to 3D-vektorer i radianer via numpy."""
+    v1_u = v1 / np.linalg.norm(v1)
+    v2_u = v2 / np.linalg.norm(v2)
+    return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+
+def label_to_roi(mask, expansion_mm=(0, 0, 0)):
+    """Finder bounding box for en maske med valgfri udvidelse i mm."""
+    lsf = sitk.LabelShapeStatisticsImageFilter()
+    lsf.Execute(mask > 0)
+    if not lsf.GetLabels():
+        return mask.GetSize(), (0, 0, 0)
+    
+    bbox = lsf.GetBoundingBox(1)  # (startX, startY, startZ, sizeX, sizeY, sizeZ)
+    start = list(bbox[:3])
+    size = list(bbox[3:])
+    spacing = mask.GetSpacing()
+    img_size = mask.GetSize()
+
+    expansion_voxels = [int(np.ceil(exp / sp)) for exp, sp in zip(expansion_mm, spacing)]
+    
+    new_start = [max(0, s - exp) for s, exp in zip(start, expansion_voxels)]
+    new_end = [min(img_size[i], start[i] + size[i] + expansion_voxels[i]) for i in range(3)]
+    new_size = [new_end[i] - new_start[i] for i in range(3)]
+    
+    return new_size, new_start
+
+def crop_to_roi(image, size, index):
+    """Beskærer et SimpleITK image ud fra størrelse og startindeks."""
+    return sitk.RegionOfInterest(image, size, index)
+
+def generate_valve_using_cylinder(la_mask, lv_mask, radius_mm=15, height_mm=10):
+    """Genererer en simpel tilnærmelse af mitralklappen i grænsefladen mellem LA og LV."""
+    overlap = sitk.BinaryDilate(la_mask, [2, 2, 2]) & sitk.BinaryDilate(lv_mask, [2, 2, 2])
+    return overlap
+
+
 
 def get_intersection(arr_slice, current_angle, angles, radii, loc_x, loc_y, angle_offset=np.pi/16):
     
@@ -454,18 +502,40 @@ def generate_lv_segments(
     
     label_combined = label_lv+label_lv_myo
     com_ = get_com(label_combined)
-    y_0, x_0 = com_[1:]
+    x_0, y_0 = com_[0], com_[1]
     
+    z_start = min(int(inf_limit_lv), int(com_mv))
+    z_end = max(int(inf_limit_lv), int(com_mv))
+
     good_slices = []
-    for n in range(inf_limit_lv, com_mv):
+    best_coverage = 0
+    best_slice = None
+
+    for n in range(z_start, z_end):
         label_lv_myo_slice = label_lv_myo[:, :, n]
         arr_lv_myo_slice = sitk.GetArrayFromImage(label_lv_myo_slice)
         loc_y, loc_x = np.where(arr_lv_myo_slice)
+
+        # If no points are found, skip this slice
+        if len(loc_y) == 0:
+            continue
+
         theta = -np.arctan2(loc_y - y_0, loc_x - x_0)
         # Convert to [0,2*np.pi]
         theta[theta < 0] += 2 * np.pi
+
+        # NEW: diagnostic - how many of the 360 angular bins are actually covered
+        ref_array = np.arange(0, 2*np.pi, 2*np.pi/360)
+        covered = sum((np.abs(theta - r) <= 0.01).any() for r in ref_array)
+        if covered > best_coverage:
+            best_coverage = covered
+            best_slice = n
+
         if check_360(theta):
             good_slices.append(n)
+
+    print(f"Best slice: {best_slice}, coverage: {best_coverage}/360 bins")
+
     com_mv_360 = good_slices[-1]
     inf_limit_lv_360 = good_slices[0]
     
@@ -541,8 +611,8 @@ def generate_lv_segments(
     theta_rv_insertion = []
     for z in loc_rv_z_basal:
         # Now get all the x and y positions
-        loc_rv_basal_x = loc_rv_x[np.where(np.in1d(loc_rv_z, z))]
-        loc_rv_basal_y = loc_rv_y[np.where(np.in1d(loc_rv_z, z))]
+        loc_rv_basal_x = loc_rv_x[np.where(np.isin(loc_rv_z, z))]
+        loc_rv_basal_y = loc_rv_y[np.where(np.isin(loc_rv_z, z))]
 
         # Now define the LV COM on each slice
         lv_com = get_com(working_contours[label_left_ventricle][:, :, int(z)])
@@ -774,7 +844,7 @@ def generate_lv_segments(
     if verbose:
         print("  Module 5: Re-orientation.")
 
-    image_np = np.zeros(contours[label_heart].GetSize()[::-1])
+    image_np = np.zeros(contours[label_heart].GetSize()[::-1], dtype=np.int8)
     image_crop = image_np[cb_index[2]:cb_index[2] + working_contours[1].GetSize()[2],
                           cb_index[1]:cb_index[1] + working_contours[1].GetSize()[1],
                           cb_index[0]:cb_index[0] + working_contours[1].GetSize()[0]]

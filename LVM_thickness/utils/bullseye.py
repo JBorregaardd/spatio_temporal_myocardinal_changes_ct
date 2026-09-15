@@ -254,8 +254,11 @@ def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=No
     ax.axis('off')
     # ax.set_title("ES - Squeez")
     fig.tight_layout()
-    filename = os.path.join(folder, f"{os.path.basename(mesh_path.split('.')[0])}.png") if savename is None\
-                         else os.path.join("/",*mesh_path.split(os.sep)[:-2], f"{savename.replace('.png', '')}.png") 
+    filename = (
+        os.path.join(folder, f"{os.path.basename(mesh_path.split('.')[0])}.png")
+        if savename is None
+        else os.path.join(os.path.dirname(os.path.dirname(mesh_path)), f"{savename.replace('.png', '')}.png")
+    )
     # plt.savefig(filename)
     r = np.linspace(0.2, 1, 4)*(rad.max()+0.25)
     for start, stop, r_in, r_out in [
