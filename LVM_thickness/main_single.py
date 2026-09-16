@@ -50,7 +50,7 @@ def main(root, folder, patient_id, exists_ok=False):
             mesh_thick = utils.read_vtk_mesh(mesh_thick_path)
         else:
             mesh_thick, _, _ = mesh_vector_allignment(
-                current_save_dir, mesh_inner, mesh_outer, num_iterations=3, num_closest_vectors=20, exists_ok=True
+                current_save_dir, mesh_inner, mesh_outer, num_iterations=3, num_closest_vectors=20, exists_ok=exists_ok
             )
         print("  -> Step 2 completed.")
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     root = r"C:\Users\Jacob pc\vscode_projects\spatio_temporal_myocardinal_changes_ct"
     folder = os.path.join(root, "data", "TotalSegmentator")
 
-    test_patient_id = "1"
+    test_patient_id = "10"
 
 
 
