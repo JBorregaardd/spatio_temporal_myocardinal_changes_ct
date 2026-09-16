@@ -270,23 +270,47 @@ def generate_lv_segments(
             working_contours[label].GetPixelID(),
         )
         lsf.Execute(label_orient_rotation)
-        cardiac_axis = np.array(lsf.GetPrincipalAxes(1)[:3])  # First principal axis approx. long axis
-        if cardiac_axis[2] < 0:
+        principal_axes = np.array(lsf.GetPrincipalAxes(1)).reshape(3, 3)
+        # ITK orders principal axes by ascending moment; the long axis is the one with the
+        # largest moment (last row), not the first.
+        cardiac_axis = principal_axes[2]
+
+        # The principal axis isn't guaranteed to point from base to apex.
+        # Use the LV/LA centres of mass to fix the sign (LV is apex-ward of LA).
+        base_to_apex = np.array(
+            get_com(working_contours[label_left_ventricle], real_coords=True)
+        ) - np.array(get_com(working_contours[label_left_atrium], real_coords=True))
+        if np.dot(cardiac_axis, base_to_apex) < 0:
             cardiac_axis = -1 * cardiac_axis
-        rotation_angle = vector_angle(cardiac_axis[::-1], (0, 0, 1))
+
+        # sitk.Resample applies the inverse of the transform to the image content, so the
+        # rotation must be built to map -z onto cardiac_axis (not cardiac_axis onto +z) for
+        # the content to end up with the apex pointing toward -z.
+        rotation_angle = vector_angle(cardiac_axis, (0, 0, -1))
 
     else:
         lsf.Execute(label_orient)
-        cardiac_axis = np.array(lsf.GetPrincipalAxes(1)[:3])  # First principal axis approx. long axis
+        principal_axes = np.array(lsf.GetPrincipalAxes(1)).reshape(3, 3)
+        # ITK orders principal axes by ascending moment; the long axis is the one with the
+        # largest moment (last row), not the first (that's the axis of smallest spread).
+        cardiac_axis = principal_axes[2]
 
-        # The principal axis isn't guaranteed to point from base to apex
-        # If is points apex to base, we have to invert it
-        # So check that here
-        if cardiac_axis[2] < 0:
+        # The principal axis isn't guaranteed to point from base to apex.
+        # Use the LV/LA centres of mass to fix the sign (LV is apex-ward of LA), rather than
+        # checking the z component, which is meaningless once GetPrincipalAxes' physical
+        # (x, y, z) vector has been reversed.
+        base_to_apex = np.array(
+            get_com(working_contours[label_left_ventricle], real_coords=True)
+        ) - np.array(get_com(working_contours[label_left_atrium], real_coords=True))
+        if np.dot(cardiac_axis, base_to_apex) < 0:
             cardiac_axis = -1 * cardiac_axis
 
-        rotation_angle = vector_angle(cardiac_axis[::-1], (0, 0, 1))
-        rotation_axis = np.cross(cardiac_axis[::-1], (0, 0, 1))
+        # sitk.Resample applies the inverse of the transform to the image content, so the
+        # rotation must be built to map -z onto cardiac_axis (not cardiac_axis onto +z) for
+        # the content to end up with the apex pointing toward -z, which is what Module 3
+        # assumes (apex = low z / bounding-box start).
+        rotation_angle = vector_angle(cardiac_axis, (0, 0, -1))
+        rotation_axis = np.cross((0, 0, -1), cardiac_axis)
         rotation_centre = get_com(label_orient, real_coords=True)
 
         
@@ -360,9 +384,11 @@ def generate_lv_segments(
         lv_axis = lv_apex_loc_img - mv_com
 
         
-        # Compute the rotation parameters
-        rotation_axis = np.cross(lv_axis, (0, 0, 1))
-        rotation_angle = vector_angle(lv_axis, (0, 0, 1))
+        # Compute the rotation parameters. sitk.Resample applies the inverse of the
+        # transform to the image content, so build the rotation to map -z onto lv_axis
+        # (not lv_axis onto +z) so the content ends up with the apex pointing toward -z.
+        rotation_axis = np.cross((0, 0, -1), lv_axis)
+        rotation_angle = vector_angle(lv_axis, (0, 0, -1))
         rotation_centre = 0.5 * (
             mv_com + lv_apex_loc_img
         )  # get_com(working_contours[label_left_ventricle], real_coords=True)
@@ -630,8 +656,8 @@ def generate_lv_segments(
 
         # Now define the LV COM on each slice
         lv_com = get_com(working_contours[label_left_ventricle][:, :, int(z)])
-        lv_com_basal_x = lv_com[1]
-        lv_com_basal_y = lv_com[0]
+        lv_com_basal_x = lv_com[0]
+        lv_com_basal_y = lv_com[1]
 
         # Compute the angle
         theta_rv = np.arctan2(lv_com_basal_y - loc_rv_basal_y, loc_rv_basal_x - lv_com_basal_x)
