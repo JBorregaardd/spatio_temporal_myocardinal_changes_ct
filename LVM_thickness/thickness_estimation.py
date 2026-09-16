@@ -267,6 +267,12 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
             print(f"    [RAYTRACE] {i}/{num_source_pts}", flush=True)
         p_start = mesh_source.GetPoint(i)
         v = vectors[i][2]
+
+        v_norm = np.linalg.norm(v)
+        if not np.isfinite(v_norm) or v_norm < 1e-6:
+            end_points.InsertNextPoint(p_start)
+            continue
+
         p_end = (p_start[0] + 2.0 * v[0],
                  p_start[1] + 2.0 * v[1],
                  p_start[2] + 2.0 * v[2])

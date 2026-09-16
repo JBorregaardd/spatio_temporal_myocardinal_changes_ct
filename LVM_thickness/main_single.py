@@ -104,7 +104,7 @@ if __name__ == "__main__":
     root = r"C:\Users\Jacob pc\vscode_projects\spatio_temporal_myocardinal_changes_ct"
     folder = os.path.join(root, "data", "TotalSegmentator")
 
-    test_patient_id = "10"
+    test_patient_id = "1"
 
 
 

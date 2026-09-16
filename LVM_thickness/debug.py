@@ -72,6 +72,26 @@ def patched_generate_lv_segments(*args, **kwargs):
                 captured["z_start"] = local_vars.get("z_start")
                 captured["z_end"] = local_vars.get("z_end")
                 captured["label_lv_myo"] = local_vars.get("label_lv_myo")
+                captured["com_mv"] = local_vars.get("com_mv")
+                captured["inf_limit_lv"] = local_vars.get("inf_limit_lv")
+                mv_mask = local_vars.get("working_contours", {}).get(local_vars.get("label_mitral_valve"))
+                if mv_mask is not None:
+                    import SimpleITK as _sitk
+                    import numpy as _np
+                    mv_arr = _sitk.GetArrayFromImage(mv_mask)  # z,y,x
+                    nz = mv_arr.nonzero()
+                    captured["mv_voxel_count"] = int(mv_arr.sum())
+                    if len(nz[0]) > 0:
+                        captured["mv_z_index_range"] = (int(nz[0].min()), int(nz[0].max()))
+                    lsf2 = _sitk.LabelShapeStatisticsImageFilter()
+                    lsf2.Execute(mv_mask > 0)
+                    if lsf2.GetLabels():
+                        centroid_phys = lsf2.GetCentroid(1)
+                        captured["mv_centroid_index_in_mv_frame"] = mv_mask.TransformPhysicalPointToContinuousIndex(centroid_phys)
+                        lv_myo_local = local_vars.get("label_lv_myo")
+                        if lv_myo_local is not None:
+                            captured["mv_centroid_index_in_lv_myo_frame"] = lv_myo_local.TransformPhysicalPointToContinuousIndex(centroid_phys)
+                            captured["lv_myo_size"] = lv_myo_local.GetSize()
         return line_tracer
 
     def call_tracer(frame, event, arg):
@@ -103,6 +123,16 @@ y_0 = captured.get("y_0")
 x_0 = captured.get("x_0")
 z_start = captured.get("z_start")
 z_end = captured.get("z_end")
+
+print("\n--- Mitral valve diagnostics ---")
+print(f"com_mv (used): {captured.get('com_mv')}")
+print(f"inf_limit_lv (used): {captured.get('inf_limit_lv')}")
+print(f"MV voxel count: {captured.get('mv_voxel_count')}")
+print(f"MV nonzero Z-index range (in MV mask's own array): {captured.get('mv_z_index_range')}")
+print(f"MV centroid continuous index, in MV mask's own frame (x,y,z): {captured.get('mv_centroid_index_in_mv_frame')}")
+print(f"MV centroid continuous index, in label_lv_myo's frame (x,y,z): {captured.get('mv_centroid_index_in_lv_myo_frame')}")
+print(f"label_lv_myo size (x,y,z): {captured.get('lv_myo_size')}")
+print("--- end diagnostics ---\n")
 
 if label_lv_myo is None:
     raise RuntimeError("Could not capture internal state - check that the "

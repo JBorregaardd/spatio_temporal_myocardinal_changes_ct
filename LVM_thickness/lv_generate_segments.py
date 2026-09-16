@@ -13,17 +13,29 @@ from scipy.ndimage import center_of_mass
 
 from utils import utils
 
-def check_360(thetas, tolerance=0.01):
+def check_360(thetas, max_gap_deg=15):
+    """Check that thetas (angles of myocardium pixels around a center) form a
+    closed ring, i.e. there is no gap wider than max_gap_deg between
+    consecutive angles (wraparound included).
+
+    This replaces a previous fixed 360-bin/tolerance check, which required a
+    pixel within a fixed angular tolerance of every one of 360 evenly spaced
+    reference angles. That check was resolution-dependent: at typical
+    myocardium ring radii (tens of voxels), the natural angular spacing
+    between neighboring boundary pixels already exceeds the tolerance, so
+    even a visually complete ring would fail. Measuring the largest angular
+    gap directly is scale-invariant and matches the anatomical question being
+    asked (is the ring closed, or is there a real missing arc).
+    """
     if thetas is None or len(thetas) == 0:
         return False
-    
-    ref_array = np.arange(0, 2*np.pi, 2*np.pi/360)
-    for i in range(len(ref_array)):
-        # find closest value in thetas
-        if (np.abs(thetas - ref_array[i])).min() > tolerance:
-            return False
 
-    return True
+    thetas = np.sort(thetas)
+    gaps = np.diff(thetas)
+    wrap_gap = thetas[0] + 2 * np.pi - thetas[-1]
+    max_gap = max(gaps.max(), wrap_gap) if len(gaps) > 0 else wrap_gap
+
+    return max_gap <= np.deg2rad(max_gap_deg)
 
 def get_com_with_z_mask(image, z_mask):
     arr = sitk.GetArrayViewFromImage(image)[z_mask]
@@ -495,7 +507,9 @@ def generate_lv_segments(
     inf_limit_lv += 3
 
     if sitk.GetArrayFromImage(working_contours[label_mitral_valve]).sum() > 0:
-        com_mv, _, _ = get_com(working_contours[label_mitral_valve])
+        # get_com returns a continuous index in (x, y, z) order; we need the
+        # z (slice) component to match inf_limit_lv and bound the slice loop.
+        _, _, com_mv = get_com(working_contours[label_mitral_valve])
     else:
         com_mv = sitk.GetArrayFromImage(label_lv_myo).nonzero()[0].max()
     com_mv = int(com_mv)
