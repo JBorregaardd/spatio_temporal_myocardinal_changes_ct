@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 from matplotlib.colors import Normalize
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
@@ -261,6 +262,8 @@ def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=No
     )
     # plt.savefig(filename)
     r = np.linspace(0.2, 1, 4)*(rad.max()+0.25)
+    label_fontsize = 12 if show_plot else 22
+    label_outline = [pe.withStroke(linewidth=3, foreground="white")]
     for start, stop, r_in, r_out in [
             (0, 6, r[2], r[3]),
             (6, 12, r[1], r[2]),
@@ -270,10 +273,21 @@ def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=No
         dtheta = 2*np.pi / n
         ax.bar(np.arange(n) * dtheta + np.pi/2, r_out - r_in, dtheta, r_in,
                clip_on=False, color="none", edgecolor="k", linewidth=2)
+        # Label each wedge with its AHA segment number, centred in the wedge.
+        for i in range(n):
+            seg_num = start + i + 1
+            theta_mid = (i + 0.5) * dtheta + np.pi/2
+            r_mid = (r_in + r_out) / 2
+            ax.text(theta_mid, r_mid, str(seg_num), ha="center", va="center",
+                    fontsize=label_fontsize, fontweight="bold", color="black",
+                    path_effects=label_outline)
     # Draw edge of segment 17 -- here; the edge needs to be drawn differently,
     # using plot().
     ax.plot(np.linspace(0, 2*np.pi), np.linspace(r[0], r[0]), "k",
             linewidth=2)
+    # Label segment 17 (apex) at the centre of the plot.
+    ax.text(0, 0, "17", ha="center", va="center", fontsize=label_fontsize,
+            fontweight="bold", color="black", path_effects=label_outline)
     plt.savefig(filename.replace(".png", "_w_border.png"), dpi=300, transparent=True, bbox_inches='tight')
     if show_plot:
         plt.show()
