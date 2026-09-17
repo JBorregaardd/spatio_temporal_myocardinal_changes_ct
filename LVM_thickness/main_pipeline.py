@@ -15,7 +15,7 @@ from thickness_estimation import (
 from create_medial_sheet import create_medial_sheet
 from utils import utils, path_handler, bullseye
 
-DATASET_NAME = "CGPS" #"NSTEMI"
+DATASET_NAME = "ImageCAS" 
 SCAN_TYPE = "ED" #"ES" "ED" or "CFA"
 
 # Configure logger

@@ -525,34 +525,95 @@ def convert_label_map_to_surface(label_name, output_file,
 
     return True
 
-def decimate_vtk_mesh(mesh, n_points=None, reduction_factor=None, smooth_fill=True):
+def remove_degenerate_triangles(mesh, min_relative_area=1e-6):
+    """Drop near-zero-area ("sliver") triangle cells from a triangulated vtkPolyData.
 
-    if n_points is not None:
-        reduction = 1.0 - n_points / mesh.GetNumberOfPoints()
-    elif reduction_factor is not None:
-        reduction = reduction_factor
-    else:
-        raise ValueError("Either n_points or reduction_factor must be provided")
+    Aggressive decimation (e.g. vtkQuadricDecimation reducing a mesh by 80%+)
+    and the smoothing pass that follows it can leave behind a small number of
+    slivers: triangles whose three points are (nearly) collinear.
+    vtkCleanPolyData's default tolerance only merges *exactly* coincident
+    points, so it does not catch these. They are worth dropping because a
+    near-zero-area triangle can yield an unstable, near-tangent ray-surface
+    intersection, but note this is mesh hygiene rather than a correctness
+    requirement - removing ~13 of 60k cells on a typical mesh here.
 
-    reduction = 1 - n_points/mesh.GetNumberOfPoints()
-    decimate = vtk.vtkQuadricDecimation()
-    decimate.SetInputData(mesh)
-    decimate.SetTargetReduction(reduction)
-    decimate.Update()
+    min_relative_area is relative to the mesh's own bounding-box diagonal
+    squared, so the same default works regardless of the mesh's physical
+    scale (mm vs voxels, a small vs. large heart, etc.).
+    """
+    polys = mesh.GetPolys()
+    polys.InitTraversal()
+    id_list = vtk.vtkIdList()
+    tri_idx = []
+    while polys.GetNextCell(id_list):
+        if id_list.GetNumberOfIds() != 3:
+            continue
+        tri_idx.append((id_list.GetId(0), id_list.GetId(1), id_list.GetId(2)))
+    tri_idx = np.asarray(tri_idx, dtype=np.int64)
+    if len(tri_idx) == 0:
+        return mesh
 
-    mesh_reduce = decimate.GetOutput()
+    points = vtk_to_numpy(mesh.GetPoints().GetData())
+    p0, p1, p2 = points[tri_idx[:, 0]], points[tri_idx[:, 1]], points[tri_idx[:, 2]]
+    areas = 0.5 * np.linalg.norm(np.cross(p1 - p0, p2 - p0), axis=1)
 
-    if not smooth_fill:
-        return mesh_reduce
-    
-    # fill holes
+    bounds = mesh.GetBounds()
+    diag_sq = (bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2
+    min_area = min_relative_area * diag_sq
+
+    keep = areas > min_area
+    n_dropped = int((~keep).sum())
+    if n_dropped == 0:
+        return mesh
+
+    new_polys = vtk.vtkCellArray()
+    for tri in tri_idx[keep]:
+        new_polys.InsertNextCell(3)
+        for pid in tri:
+            new_polys.InsertCellPoint(int(pid))
+
+    filtered = vtk.vtkPolyData()
+    filtered.SetPoints(mesh.GetPoints())
+    filtered.SetPolys(new_polys)
+    # Point data (e.g. normals, scalars) is keyed by point id, which is
+    # unaffected by dropping cells, so it carries straight over; cleaning
+    # below then drops the entries for points no cell references any more.
+    filtered.GetPointData().PassData(mesh.GetPointData())
+    if mesh.GetCellData().GetNumberOfArrays() > 0:
+        print("    [WARN] remove_degenerate_triangles: dropping cell data "
+              "arrays (not supported by this filter)")
+
+    # Drop points that are no longer referenced by any (retained) cell.
+    cleaner = vtk.vtkCleanPolyData()
+    cleaner.SetInputData(filtered)
+    cleaner.Update()
+    return cleaner.GetOutput()
+
+def smooth_and_fill_mesh(mesh):
+    """Fill holes, triangulate, smooth, and recompute normals on a surface mesh.
+
+    This is the non-destructive half of decimate_vtk_mesh: it does not remove
+    any detail on purpose, it just cleans up the raw marching-cubes output.
+    The windowed-sinc smoothing in particular is what removes the voxel
+    "staircase" terracing from the isosurface, so it is needed whether or not
+    the mesh is being decimated - skipping it leaves that terracing to show up
+    as noise in the ray-cast wall thickness.
+    """
     fill = vtk.vtkFillHolesFilter()
-    fill.SetInputData(mesh_reduce)
+    fill.SetInputData(mesh)
     fill.SetHoleSize(10000)
     fill.Update()
 
+    # vtkFillHolesFilter patches each hole with a single n-gon polygon, not
+    # triangles, and neither the smoother nor vtkPolyDataNormals below
+    # re-triangulates. Doing it here keeps every downstream consumer of this
+    # mesh on well-formed triangle cells.
+    triangulate = vtk.vtkTriangleFilter()
+    triangulate.SetInputConnection(fill.GetOutputPort())
+    triangulate.Update()
+
     smoother = vtk.vtkWindowedSincPolyDataFilter()
-    smoother.SetInputConnection(fill.GetOutputPort())
+    smoother.SetInputConnection(triangulate.GetOutputPort())
     smoother.SetNumberOfIterations(100)
     smoother.BoundarySmoothingOn()
     smoother.FeatureEdgeSmoothingOn()
@@ -569,7 +630,38 @@ def decimate_vtk_mesh(mesh, n_points=None, reduction_factor=None, smooth_fill=Tr
     # normals.SetFeatureAngle(15.0)
     normals.Update()
 
-    return normals.GetOutput()
+    # Applied last, since the smoothing pass above can itself pull points
+    # together and introduce new slivers on top of any left by decimation.
+    return remove_degenerate_triangles(normals.GetOutput())
+
+def decimate_vtk_mesh(mesh, n_points=None, reduction_factor=None, smooth_fill=True):
+    """Reduce mesh vertex count with vtkQuadricDecimation.
+
+    Give either n_points (target vertex count) or reduction_factor (fraction
+    of vertices to remove, 0-1). With smooth_fill=True the decimated mesh is
+    then passed through smooth_and_fill_mesh().
+
+    Note that decimation moves the surface, so a mesh used for distance or
+    thickness measurement pays a (small, systematic) accuracy cost for it.
+    """
+    if n_points is not None:
+        reduction = 1.0 - n_points / mesh.GetNumberOfPoints()
+    elif reduction_factor is not None:
+        reduction = reduction_factor
+    else:
+        raise ValueError("Either n_points or reduction_factor must be provided")
+
+    decimate = vtk.vtkQuadricDecimation()
+    decimate.SetInputData(mesh)
+    decimate.SetTargetReduction(reduction)
+    decimate.Update()
+
+    mesh_reduce = decimate.GetOutput()
+
+    if not smooth_fill:
+        return mesh_reduce
+
+    return smooth_and_fill_mesh(mesh_reduce)
 
 def decimate_vtk_mesh_paths(mesh_path, save_name, n_points=None, reduction_factor=None, smooth_fill=True):
 

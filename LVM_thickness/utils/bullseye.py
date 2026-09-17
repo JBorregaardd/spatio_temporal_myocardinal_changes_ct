@@ -22,7 +22,7 @@ def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, 
     label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID) if lvm else label_total == LV_ID
 
     im_bin = sitk.GetArrayFromImage(label_lv).transpose(2, 1, 0)
-    im_ring = im_bin & ~morphology.binary_erosion(im_bin)
+    im_ring = im_bin & ~morphology.erosion(im_bin)
     im_ring = im_ring.astype(np.uint8)
 
     mesh = utils.read_vtk_mesh(mesh_name)
@@ -57,7 +57,7 @@ def get_scalar_ring_points_ids(total_path, mesh_name, exists_ok=True):
     label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID)
 
     im_bin = sitk.GetArrayFromImage(label_lv).transpose(2, 1, 0)
-    im_ring = im_bin & ~morphology.binary_erosion(im_bin)
+    im_ring = im_bin & ~morphology.erosion(im_bin)
     im_ring = im_ring.astype(np.uint8)
 
     mesh = utils.read_vtk_mesh(mesh_name)
@@ -117,7 +117,7 @@ def generate_polar_values(path,
     # input_path = os.path.join(path, "segmentations/total_seg/total_seg.nii.gz")
     label_total = sitk.ReadImage(total_path)
     lab_total = sitk.GetArrayFromImage(label_total).transpose(2, 1, 0)
-    ignore_ring = morphology.binary_dilation(lab_total == (LVM_ID if lvm else LV_ID)) #outer_ring & inner_ring
+    ignore_ring = morphology.dilation(lab_total == (LVM_ID if lvm else LV_ID)) #outer_ring & inner_ring
     
     if scalar_ring_ids is not None:
         scalar_image = get_scalar_values_from_ring_points(total_path, mesh_name, scalar_ring_ids, label_total)
@@ -274,9 +274,12 @@ def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=No
         ax.bar(np.arange(n) * dtheta + np.pi/2, r_out - r_in, dtheta, r_in,
                clip_on=False, color="none", edgecolor="k", linewidth=2)
         # Label each wedge with its AHA segment number, centred in the wedge.
+        # ax.bar() defaults to align="center", so the i-th wedge is centred on
+        # i*dtheta + pi/2 (the same angle passed to bar()), not offset by half
+        # a wedge from it.
         for i in range(n):
             seg_num = start + i + 1
-            theta_mid = (i + 0.5) * dtheta + np.pi/2
+            theta_mid = i * dtheta + np.pi/2
             r_mid = (r_in + r_out) / 2
             ax.text(theta_mid, r_mid, str(seg_num), ha="center", va="center",
                     fontsize=label_fontsize, fontweight="bold", color="black",

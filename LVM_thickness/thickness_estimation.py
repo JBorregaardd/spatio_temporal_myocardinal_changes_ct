@@ -12,7 +12,19 @@ from utils import utils
 
 
 
-def create_meshes_from_segmentation(input_path, out_path, save_name="total_seg", save=True):
+def create_meshes_from_segmentation(input_path, out_path, save_name="total_seg", save=True,
+                                    decimate_to=None):
+    """Build the endo- and epicardial surface meshes from a segmentation.
+
+    decimate_to: target vertex count per surface, or None (default) for no
+    decimation. Decimation used to be hardcoded to 30000 as a workaround for
+    vtkOBBTree crashing and being slow during ray tracing; that turned out to
+    be a bug in vtkOBBTree itself (it is no longer used - see
+    mesh_vector_allignment), and full-resolution meshes now run in ~1 minute
+    in well under a GB. Since decimation moves the surface and therefore
+    biases the wall-thickness measurement, it is off by default. Pass e.g.
+    decimate_to=30000 to restore the old behaviour for comparison.
+    """
     #TODO: give both paths or fix code
     save_inner = os.path.join(out_path, "surfaces", "inner_mesh.vtk") if save else None
     save_outer = os.path.join(out_path, "surfaces", "outer_mesh.vtk") if save else None
@@ -50,14 +62,24 @@ def create_meshes_from_segmentation(input_path, out_path, save_name="total_seg",
     mesh_inner = utils.read_vtk_mesh(save_inner)
     mesh_outer = utils.read_vtk_mesh(save_outer)
 
-    # Decimate meshes to prevent VTK out-of-memory / OBBTree stack overflow
-    print(f"    [DECIMATE] Simplifying inner mesh from {mesh_inner.GetNumberOfPoints()} points...")
-    mesh_inner = utils.decimate_vtk_mesh(mesh_inner, 30000)
-    utils.write_vtk_mesh(mesh_inner, save_inner)
-
-    print(f"    [DECIMATE] Simplifying outer mesh from {mesh_outer.GetNumberOfPoints()} points...")
-    mesh_outer = utils.decimate_vtk_mesh(mesh_outer, 30000)
-    utils.write_vtk_mesh(mesh_outer, save_outer)
+    # Either way the meshes go through smooth_and_fill_mesh, which is what
+    # removes the marching-cubes staircase terracing - only the vertex-count
+    # reduction is optional.
+    for label, mesh, save_path in (("inner", mesh_inner, save_inner),
+                                   ("outer", mesh_outer, save_outer)):
+        n_before = mesh.GetNumberOfPoints()
+        if decimate_to is None:
+            print(f"    [MESH] Smoothing {label} mesh ({n_before} points, no decimation)...")
+            mesh = utils.smooth_and_fill_mesh(mesh)
+        else:
+            print(f"    [DECIMATE] Simplifying {label} mesh from {n_before} points "
+                  f"to ~{decimate_to}...")
+            mesh = utils.decimate_vtk_mesh(mesh, decimate_to)
+        utils.write_vtk_mesh(mesh, save_path)
+        if label == "inner":
+            mesh_inner = mesh
+        else:
+            mesh_outer = mesh
 
     # mesh_inner = utils.segmentation_vtk_to_mesh_vtk(inner_path,  save_name=save_inner)
     # mesh_outer = utils.segmentation_vtk_to_mesh_vtk(outer_path,  save_name=save_outer)
@@ -238,29 +260,50 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
         # save_points_to_mesh(path, mesh_source, mesh_vectors, name=f"{iteration+1}", use_source=True)
 
     # trace vectors from source to target
-    print("    [ALIGN] Building OBBTree and tracing ray intersections...")
+    print("    [ALIGN] Building cell locator and tracing ray intersections...")
 
 
-    # Clean the target mesh before building the OBBTree
+    # Mesh hygiene before building the locator: merge duplicate points, make
+    # sure every cell is a triangle (vtkFillHolesFilter can leave n-gon
+    # patches behind), and drop near-zero-area slivers, which can produce
+    # spurious near-tangent ray hits.
     cleaner = vtk.vtkCleanPolyData()
     cleaner.SetInputData(mesh_target)
     cleaner.Update()
     n_before = mesh_target.GetNumberOfPoints()
     mesh_target = cleaner.GetOutput()
     print(f"    [CHECK] mesh_target points before clean: {n_before}, after: {mesh_target.GetNumberOfPoints()}")
-    
 
-    obbTree = vtk.vtkOBBTree()
-    obbTree.SetDataSet(mesh_target)
-    obbTree.BuildLocator()
+
+    # NOTE: this used to be a vtkOBBTree, which is broken in VTK 9.7.0:
+    # IntersectWithLine(p1, p2, points, cellIds) returns 0 ("no intersection")
+    # for every ray - even one fired straight through a unit sphere - while
+    # also corrupting heap memory, which segfaulted the process after a few
+    # thousand calls. (vtkOBBTree.InsideOrOutside is wrong in the same build
+    # too: it reports a point 9 units outside a unit sphere as inside.)
+    # Because it always returned 0, every ray silently fell through to the
+    # fallback branch below, so this loop never actually ray-traced anything.
+    # vtkCellLocator computes the same intersections correctly and ~8x faster.
+    locator = vtk.vtkCellLocator()
+    locator.SetDataSet(mesh_target)
+    locator.BuildLocator()
 
     mesh_vectors = vtk.vtkPolyData()
     end_points = vtk.vtkPoints()
 
-    # Reuse a single vtkPoints container across iterations
+    # Reuse containers across iterations
     intersection_points = vtk.vtkPoints()
+    intersection_cells = vtk.vtkIdList()
 
     num_source_pts = mesh_source.GetNumberOfPoints()
+
+    # A rare smoothing-loop edge case (e.g. weights_sum landing just above the
+    # 1e-6 floor) can leave a vector with an anatomically implausible
+    # magnitude, so clamp the ray length to a generous multiple of the target
+    # mesh's own bounding diagonal.
+    bounds = mesh_target.GetBounds()
+    mesh_diagonal = np.linalg.norm([bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]])
+    max_ray_length = 5.0 * mesh_diagonal
 
     for i in range(num_source_pts):
         if i % 1000 == 0:
@@ -272,15 +315,21 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
         if not np.isfinite(v_norm) or v_norm < 1e-6:
             end_points.InsertNextPoint(p_start)
             continue
+        if v_norm > max_ray_length:
+            v = v * (max_ray_length / v_norm)
 
         p_end = (p_start[0] + 2.0 * v[0],
                  p_start[1] + 2.0 * v[1],
                  p_start[2] + 2.0 * v[2])
 
-        # Reset container for reuse
+        # Reset containers for reuse
         intersection_points.Reset()
+        intersection_cells.Reset()
 
-        code = obbTree.IntersectWithLine(p_start, p_end, intersection_points, None)
+        # Intersections come back sorted along the ray, so GetPoint(0) below
+        # is the first crossing of the epicardial surface.
+        code = locator.IntersectWithLine(list(p_start), list(p_end), 1e-6,
+                                         intersection_points, intersection_cells)
 
         if code != 0 and intersection_points.GetNumberOfPoints() > 0:
             target_pt = intersection_points.GetPoint(0)
