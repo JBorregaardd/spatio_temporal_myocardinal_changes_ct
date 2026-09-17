@@ -21,6 +21,7 @@ dependencies = [
     "fastapi==0.115.6",
     "pandas>=3.0.5",
     "platipy>=0.4.1",
+    "python-dotenv>=1.2.3",
     "scikit-image>=0.26.0",
     "scipy>=1.18.1",
     "simpleitk>=2.5.6",

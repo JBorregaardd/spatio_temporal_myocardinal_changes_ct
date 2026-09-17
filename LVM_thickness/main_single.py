@@ -1,10 +1,12 @@
 import os
 import json
+import argparse
 import multiprocessing
 import logging
 import traceback
 from functools import partial
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 from lv_generate_segments import wrap_lv_segments
 from thickness_estimation import (
@@ -101,12 +103,35 @@ def main(root, folder, patient_id, exists_ok=False):
 
 if __name__ == "__main__":
 
-    root = r"C:\Users\Jacob pc\vscode_projects\spatio_temporal_myocardinal_changes_ct"
-    folder = os.path.join(root, "data", "TotalSegmentator")
+    # Load PROJECT_ROOT / SEGMENTATION_FOLDER / PATIENT_ID from a .env file next to the
+    # repo root, resolved relative to this script rather than the current working
+    # directory, so it works the same whether run locally or submitted from a cluster
+    # job script with a different CWD. Real environment variables (e.g. set by a SLURM
+    # job script) always take precedence over .env - load_dotenv() never overrides an
+    # already-set variable - so the same .env-based setup works unchanged on a cluster
+    # that prefers to export these directly instead of shipping a .env file.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    load_dotenv(os.path.join(repo_root, ".env"))
 
-    test_patient_id = "10"
+    parser = argparse.ArgumentParser(description="Run the LVM thickness pipeline for a single patient.")
+    parser.add_argument(
+        "--patient-id",
+        default=os.environ.get("PATIENT_ID", "1"),
+        help="Patient id to process (default: $PATIENT_ID from .env, else '1'). "
+             "Useful for cluster array jobs, e.g. --patient-id $SLURM_ARRAY_TASK_ID.",
+    )
+    args = parser.parse_args()
+    test_patient_id = args.patient_id
 
-
+    try:
+        root = os.environ["PROJECT_ROOT"]
+        folder = os.environ["SEGMENTATION_FOLDER"]
+    except KeyError as missing:
+        raise SystemExit(
+            f"\n[ERROR] Missing required environment variable {missing}.\n"
+            f"Set PROJECT_ROOT and SEGMENTATION_FOLDER in a .env file at the repo root "
+            f"(see .env.example), or export them directly in your shell/job script."
+        )
 
     expected_img = os.path.join(root, "data", "1_200", f"{test_patient_id}.img.nii.gz")
     expected_seg = os.path.join(folder, f"{test_patient_id}.heart.nii.gz")
