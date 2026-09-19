@@ -169,10 +169,14 @@ if __name__ == "__main__":
 
     table = calculate_mean_thickness_per_segment(folder, mesh_name, total_path)
 
+    # add patient id to the table
+    for row in table:
+        row["patient_id"] = test_patient_id
+
     # Save the results to a CSV file
     output_csv_path = os.path.join(folder, "mean_thickness_per_segment.csv")
 
     with open(output_csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["segment", "mean_thickness"])
+        writer = csv.DictWriter(f, fieldnames=["patient_id", "segment", "mean_thickness"])
         writer.writeheader()
         writer.writerows(table)
