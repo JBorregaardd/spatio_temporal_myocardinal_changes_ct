@@ -24,8 +24,8 @@ def detect_outliers_per_segment(data):
 
     for segment, segment_data in data.groupby("segment"):
 
-        q1 = segment_data["mean_thickness"].quantile(0.25)
-        q3 = segment_data["mean_thickness"].quantile(0.75)
+        q1 = segment_data["median_thickness"].quantile(0.25)
+        q3 = segment_data["median_thickness"].quantile(0.75)
 
         iqr = q3 - q1
 
@@ -33,8 +33,8 @@ def detect_outliers_per_segment(data):
         upper_bound = q3 + 1.5 * iqr
 
         outliers = segment_data[
-            (segment_data["mean_thickness"] < lower_bound) |
-            (segment_data["mean_thickness"] > upper_bound)
+            (segment_data["median_thickness"] < lower_bound) |
+            (segment_data["median_thickness"] > upper_bound)
         ].copy()
 
         outliers["lower_bound"] = lower_bound
@@ -60,7 +60,7 @@ def plot_segment(data, segment, output_path):
     plt.figure(figsize=(8, 6))
 
     plt.boxplot(
-        segment_data["mean_thickness"],
+        segment_data["median_thickness"],
         vert=True
     )
 
@@ -69,12 +69,12 @@ def plot_segment(data, segment, output_path):
 
     plt.scatter(
         x,
-        segment_data["mean_thickness"],
+        segment_data["median_thickness"],
         alpha=0.5
     )
 
-    plt.ylabel("Mean thickness (mm)")
-    plt.title(f"Mean myocardial thickness - Segment {segment}")
+    plt.ylabel("Median thickness (mm)")
+    plt.title(f"Median myocardial thickness - Segment {segment}")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
@@ -136,13 +136,13 @@ def main():
     plt.figure(figsize=(14, 7))
 
     data.boxplot(
-        column="mean_thickness",
+        column="median_thickness",
         by="segment"
     )
 
     plt.xlabel("Segment")
-    plt.ylabel("Mean thickness (mm)")
-    plt.title("Mean myocardial thickness across patients by segment")
+    plt.ylabel("median thickness (mm)")
+    plt.title("median myocardial thickness across patients by segment")
 
     plt.suptitle("")  # Remove pandas' automatic title
 
