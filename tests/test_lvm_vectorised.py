@@ -137,3 +137,29 @@ def test_discover_patients_requires_image_and_segmentation(tmp_path: Path) -> No
         (seg_dir / f"{pid}.arteries.nii.gz").touch()
 
     assert discover_patients(str(tmp_path), str(seg_dir)) == ["1", "10", "100"]
+
+
+def test_aorta_distance_matches_full_volume_distance_map() -> None:
+    """Cropping the distance map to the LV box gives the same distances as the full volume, up to the cap."""
+    from scipy.ndimage import distance_transform_edt
+
+    spacing = (0.5, 0.5, 0.25)
+    labels = np.zeros((40, 30, 20), dtype=np.uint8)
+    labels[5:15, 8:20, 4:16] = 3
+    labels[16:22, 10:16, 6:12] = utils.AORTA_ID
+    labels[35:39, 25:29, 15:19] = utils.AORTA_ID
+    image = sitk.GetImageFromArray(labels)
+    image.SetSpacing(spacing)
+    image.SetOrigin((-3.0, 7.5, 12.0))
+
+    full = distance_transform_edt(labels.transpose(2, 1, 0) != utils.AORTA_ID, sampling=spacing)
+    lv_index = np.argwhere(labels.transpose(2, 1, 0) == 3)
+    points = np.array([image.TransformIndexToPhysicalPoint(tuple(int(i) for i in idx)) for idx in lv_index])
+
+    cap = 3.0
+    got = utils.aorta_distance_at_points(image, points, cap)
+    want = full[lv_index[:, 0], lv_index[:, 1], lv_index[:, 2]]
+    near = want <= cap
+    assert near.any() and (~near).any()
+    np.testing.assert_allclose(got[near], want[near])
+    assert np.all(got[~near] > cap)

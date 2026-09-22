@@ -7,7 +7,7 @@ import numpy as np
 import os
 import SimpleITK as sitk
 from skimage.morphology import ball
-from scipy.ndimage import center_of_mass
+from scipy.ndimage import center_of_mass, distance_transform_edt
 from scipy.interpolate import interpn, make_interp_spline
 import pandas as pd
 from PIL import Image
@@ -841,3 +841,52 @@ def physical_to_continuous_index(image: sitk.Image, points: np.ndarray) -> np.nd
     direction, spacing, origin = _image_affine(image)
     points = np.asarray(points, dtype=np.float64)
     return np.linalg.solve(direction, (points - origin).T).T / spacing
+
+
+AORTA_ID = 6
+LV_REGION_IDS = (1, 3)
+
+
+def aorta_distance_at_points(label_image: sitk.Image, points: np.ndarray, max_distance_mm: float) -> np.ndarray:
+    """Distance in mm from each physical point to the nearest aorta voxel, exact up to ``max_distance_mm``.
+
+    Intended for excluding thickness measurements at the LV outflow tract. Not used by the pipeline yet; the choice
+    of how to handle the aortic region is pending.
+
+    Background: where the LV opens into the aorta, the inner and outer surfaces meet, so the ray-traced thickness
+    there is not a wall measurement - it runs from ~0 mm to a few mm. Averaged onto the bullseye/analysis ring voxels,
+    it pulls the basal segment bordering the aorta (segment 3 in our numbering) far below its neighbours, e.g.
+    3.8 mm vs 11.2 / 9.3 mm in segments 2 / 4 for ImageCAS patient 1. Value cutoffs do not fix it reliably (the
+    artefact is not near 0 everywhere). Dropping mesh vertices within 3 mm of the aorta *before* averaging did:
+    segment 3 came back in line with its neighbours for 8/8 test patients, no other segment moved by more than
+    0.03 mm, at the cost of 12-39% of segment 3's voxels. Usage::
+
+        vertices = vtk_to_numpy(mesh.GetPoints().GetData())
+        keep = aorta_distance_at_points(label_image, vertices, 3.0) > 3.0
+
+    The distance map is only computed inside the LV bounding box plus a ``max_distance_mm`` margin, which is exact
+    up to that distance at a fraction of the cost of the full volume.
+
+    Args:
+        label_image: TotalSegmentator heart-chambers segmentation (aorta = label 6).
+        points: (N, 3) physical points in or near the LV, e.g. mesh vertices.
+        max_distance_mm: Largest distance that needs to be exact.
+
+    Returns:
+        (N,) distances; points farther than ``max_distance_mm`` (or with no aorta nearby) get a value above it.
+    """
+    labels = sitk.GetArrayViewFromImage(label_image).transpose(2, 1, 0)
+    spacing = np.asarray(label_image.GetSpacing())
+    index = np.rint(physical_to_continuous_index(label_image, points)).astype(int)
+    index = np.clip(index, 0, np.array(labels.shape) - 1)
+
+    lv = np.argwhere(np.isin(labels, LV_REGION_IDS))
+    margin = np.ceil(max_distance_mm / spacing).astype(int) + 1
+    lo = np.maximum(np.minimum(lv.min(axis=0), index.min(axis=0)) - margin, 0)
+    hi = np.minimum(np.maximum(lv.max(axis=0), index.max(axis=0)) + margin + 1, labels.shape)
+    aorta = labels[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]] == AORTA_ID
+    if not aorta.any():
+        return np.full(len(index), np.inf)
+    distance = distance_transform_edt(~aorta, sampling=spacing)
+    local = index - lo
+    return distance[local[:, 0], local[:, 1], local[:, 2]]
