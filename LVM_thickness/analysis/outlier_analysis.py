@@ -141,8 +141,8 @@ def main():
     )
 
     plt.xlabel("Segment")
-    plt.ylabel("median thickness (mm)")
-    plt.title("median myocardial thickness across patients by segment")
+    plt.ylabel("Median thickness (mm)")
+    plt.title("Median myocardial thickness across patients by segment")
 
     plt.suptitle("")  # Remove pandas' automatic title
 
