@@ -1,45 +1,30 @@
 import os
 import csv
 import argparse
-import sys
-from pathlib import Path
-import re
 import numpy as np
-import pandas as pd
 
 import SimpleITK as sitk
 import vtk
-from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
-from skimage import morphology, measure
+from skimage import morphology
+from dotenv import load_dotenv
 
 
 LVM_ID = 1
 LV_ID = 3
 
-def read_vtk_mesh(path, get_normals=False):
+def read_vtk_mesh(path):
     reader = vtk.vtkPolyDataReader()
     reader.SetFileName(path)
     reader.Update()
     output = reader.GetOutput()
     assert isinstance(output, vtk.vtkPolyData), f"Output is not a vtkPolyData object: {path}"
     assert output.GetNumberOfPoints() > 0, f"No points found in mesh: {path}"
-
-    if get_normals and not output.GetPointData().GetNormals():
-        # vtkTriangleMeshPointNormals 
-        normals = vtk.vtkPolyDataNormals()
-        normals.SetInputData(output)
-        normals.ComputePointNormalsOn()
-        normals.ComputeCellNormalsOff()
-        normals.SplittingOff()
-        normals.Update()
-        output = normals.GetOutput()
-
     return output
 
 
-def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, lvm=True):
+def get_scalar_ring_mm_coordinates(total_path, mesh_name):
     label_total = sitk.ReadImage(total_path)
-    label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID) if lvm else label_total == LV_ID
+    label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID)
 
     im_bin = sitk.GetArrayFromImage(label_lv).transpose(2, 1, 0)
     im_ring = im_bin & ~morphology.erosion(im_bin)
@@ -64,30 +49,17 @@ def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, 
             scalar_ring[x, y, z] = mesh.GetPointData().GetScalars().GetTuple1(idx)
         else:
             scalar_ring[x, y, z] = np.mean([mesh.GetPointData().GetScalars().GetTuple1(ids.GetId(i)) for i in range(ids.GetNumberOfIds())])
-            # print(ids.GetNumberOfIds())
         scalar_ring[x, y, z] += 1e-10 # to avoid 0 values
-        
+
     scalar_image = sitk.GetImageFromArray(scalar_ring.transpose(2, 1, 0))
     scalar_image.CopyInformation(label_total)
-    sitk.WriteImage(scalar_image, os.path.join(path, "segmentations", f"mm_{os.path.basename(mesh_name).split('.')[0]}_ring.nii.gz"))
     return scalar_image
-
 
 
 def calculate_mean_thickness_per_segment(folder, mesh_name, total_path):
 
-    # Get thickness values and the 17-segment labels
-    label_total = sitk.ReadImage(total_path)
-
-    # Read thickness mesh
-    mesh = read_vtk_mesh(mesh_name)
-
     # Get thickness values on the myocardium ring
-    scalar_image = get_scalar_ring_mm_coordinates(
-        folder,
-        total_path,
-        mesh_name
-    )
+    scalar_image = get_scalar_ring_mm_coordinates(total_path, mesh_name)
 
     # Read the transform
     transform_path = os.path.join(folder, "lv17_transform.txt")
@@ -149,8 +121,12 @@ def calculate_mean_thickness_per_segment(folder, mesh_name, total_path):
 
 
 if __name__ == "__main__":
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    load_dotenv(os.path.join(project_root, ".env"))
 
-    parser = argparse.ArgumentParser(description="Run the LVM thickness pipeline for a single patient.")
+    root = os.environ["PROJECT_ROOT"]
+
+    parser = argparse.ArgumentParser(description="Run the LVM thickness analysis pipeline for a single patient.")
     parser.add_argument(
         "--patient-id",
         default=os.environ.get("PATIENT_ID", "1"),
@@ -161,11 +137,9 @@ if __name__ == "__main__":
     test_patient_id = args.patient_id
 
 
-    root = r"/Users/signeolsen/Desktop/spatio_temporal_myocardinal_changes_ct/"
-
     folder = os.path.join(root, "output", f"{test_patient_id}")
     mesh_name = os.path.join(folder, "surfaces", "dist_source.vtk")
-    total_path = os.path.join(folder, "segmentations", "lv17", "lv17.nii.gz")
+    total_path = os.path.join(root, "data", "TotalSegmentator", f"{test_patient_id}.heart.nii.gz")
 
     table = calculate_mean_thickness_per_segment(folder, mesh_name, total_path)
 
