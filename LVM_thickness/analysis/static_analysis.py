@@ -61,7 +61,7 @@ def get_scalar_ring_mm_coordinates(total_path, mesh_name):
     return scalar_image
 
 
-def calculate_median_thickness_per_segment(folder, mesh_name, total_path):
+def calculate_statistics_thickness_per_segment(folder, mesh_name, total_path):
 
     # Get thickness values on the myocardium ring
     scalar_image = get_scalar_ring_mm_coordinates(total_path, mesh_name)
@@ -102,7 +102,7 @@ def calculate_median_thickness_per_segment(folder, mesh_name, total_path):
     segments = sitk.GetArrayFromImage(lv17_transformed).transpose(2, 1, 0)
     thickness = sitk.GetArrayFromImage(scalar_seg).transpose(2, 1, 0)
 
-    # Calculate median thickness for each segment
+    # Calculate median, mean and std thickness for each segment
     results = []
 
     for segment in range(1, 18):
@@ -114,12 +114,18 @@ def calculate_median_thickness_per_segment(folder, mesh_name, total_path):
 
         if len(values) > 0:
             median_thickness = np.median(values)
+            mean_thickness = np.mean(values)
+            std_thickness = np.std(values)
         else:
             median_thickness = np.nan
+            mean_thickness = np.nan
+            std_thickness = np.nan
 
         results.append({
             "segment": segment,
-            "median_thickness": median_thickness
+            "median_thickness": median_thickness,
+            "mean_thickness": mean_thickness,
+            "std_thickness": std_thickness
         })
 
     return results
@@ -146,16 +152,16 @@ if __name__ == "__main__":
     mesh_name = os.path.join(folder, "surfaces", "dist_source.vtk")
     total_path = os.path.join(root, "data", "TotalSegmentator", f"{test_patient_id}.heart.nii.gz")
 
-    table = calculate_median_thickness_per_segment(folder, mesh_name, total_path)
+    table = calculate_statistics_thickness_per_segment(folder, mesh_name, total_path)
 
     # add patient id to the table
     for row in table:
         row["patient_id"] = test_patient_id
 
     # Save the results to a CSV file
-    output_csv_path = os.path.join(folder, "median_thickness_per_segment.csv")
+    output_csv_path = os.path.join(folder, "statistics_thickness_per_segment.csv")
 
     with open(output_csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["patient_id", "segment", "median_thickness"])
+        writer = csv.DictWriter(f, fieldnames=["patient_id", "segment", "median_thickness", "mean_thickness", "std_thickness"])
         writer.writeheader()
         writer.writerows(table)
