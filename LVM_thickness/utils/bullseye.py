@@ -26,27 +26,34 @@ def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, 
     im_ring = im_ring.astype(np.uint8)
 
     mesh = utils.read_vtk_mesh(mesh_name)
-
-    locator = vtk.vtkPointLocator()
-    locator.SetDataSet(mesh)
-    locator.BuildLocator()
     radius = 0.5 # mm
 
+    # Mean mesh scalar within `radius` of each ring voxel, else the nearest vertex's
     ring_nnz = im_ring.nonzero()
+    ring_idx = np.stack(ring_nnz, axis=1)
+    ring_points = utils.continuous_index_to_physical(label_total, ring_idx)
+
+    mesh_points = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
+    mesh_scalars = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
+    tree = cKDTree(mesh_points)
+
+    values = np.empty(len(ring_idx), dtype=np.float64)
+    neighbours = tree.query_ball_point(ring_points, r=radius, workers=utils.num_threads())
+    counts = np.fromiter((len(n) for n in neighbours), dtype=np.int64, count=len(neighbours))
+
+    has_nb = counts > 0
+    if has_nb.any():
+        flat = np.concatenate([n for n in neighbours if n]).astype(np.int64)
+        owner = np.repeat(np.flatnonzero(has_nb), counts[has_nb])
+        sums = np.bincount(owner, weights=mesh_scalars[flat], minlength=len(ring_idx))
+        values[has_nb] = sums[has_nb] / counts[has_nb]
+    if (~has_nb).any():
+        _, nearest = tree.query(ring_points[~has_nb], workers=utils.num_threads())
+        values[~has_nb] = mesh_scalars[nearest]
+
     scalar_ring = np.zeros_like(im_ring, dtype=np.float64)
-    for x, y, z in zip(*ring_nnz):
-        indices = np.array([x, y, z], dtype=np.float64)
-        point = label_total.TransformContinuousIndexToPhysicalPoint(indices)
-        ids = vtk.vtkIdList()
-        locator.FindPointsWithinRadius(radius, point, ids)
-        if ids.GetNumberOfIds() == 0:
-            idx = locator.FindClosestPoint(point)
-            scalar_ring[x, y, z] = mesh.GetPointData().GetScalars().GetTuple1(idx)
-        else:
-            scalar_ring[x, y, z] = np.mean([mesh.GetPointData().GetScalars().GetTuple1(ids.GetId(i)) for i in range(ids.GetNumberOfIds())])
-            # print(ids.GetNumberOfIds())
-        scalar_ring[x, y, z] += 1e-10 # to avoid 0 values
-        
+    scalar_ring[ring_nnz] = values + 1e-10 # to avoid 0 values
+
     scalar_image = sitk.GetImageFromArray(scalar_ring.transpose(2, 1, 0))
     scalar_image.CopyInformation(label_total)
     sitk.WriteImage(scalar_image, os.path.join(path, "segmentations", f"mm_{os.path.basename(mesh_name).split('.')[0]}_ring.nii.gz"))

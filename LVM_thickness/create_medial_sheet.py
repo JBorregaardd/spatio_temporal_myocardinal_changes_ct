@@ -1,6 +1,7 @@
 import os
 import vtk
 import numpy as np
+from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 import logging
 from utils import utils
 
@@ -39,18 +40,12 @@ def create_medial_sheet(path):
             logging.error(f"Mismatch! Mesh has {num_points} points, but there are {len(vectors)} vectors.")
             return
             
-        # Create a new set of points for the medial sheet
+        # Midpoint: 50% of the thickness vector
+        points = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
+        medial = points + 0.5 * vectors
         new_points = vtk.vtkPoints()
-        for i in range(num_points):
-            # Get the original point
-            p = np.array(mesh.GetPoint(i))
-            # Get the corresponding vector
-            v = vectors[i]
-            
-            # Calculate the midpoint (50% of the distance)
-            medial_p = p + 0.5 * v
-            new_points.InsertNextPoint(medial_p)
-            
+        new_points.SetData(numpy_to_vtk(medial, deep=True))
+
         # Create the new mesh by copying the topology from the old one, but with the new points
         medial_mesh = vtk.vtkPolyData()
         medial_mesh.DeepCopy(mesh)

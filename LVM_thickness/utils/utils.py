@@ -785,3 +785,59 @@ def smooth_mesh_scalars(mesh, radius=1.0, sigma=None, iterations=1):
 
     mesh.GetPointData().SetScalars(numpy_to_vtk(scalars, deep=True))
     return mesh
+
+
+
+def num_threads() -> int:
+    """Thread count for threaded numpy/scipy helpers such as cKDTree queries.
+
+    Reads LVM_THREADS so the dataset runner can split cores between parallel
+    patients; defaults to -1 (all cores) for single-patient runs.
+
+    Returns:
+        Thread count in the convention scipy's ``workers`` argument expects.
+    """
+    return int(os.environ.get("LVM_THREADS", "-1"))
+
+
+def _image_affine(image: sitk.Image) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the direction matrix, spacing and origin of a SimpleITK image as arrays."""
+    dim = image.GetDimension()
+    direction = np.asarray(image.GetDirection(), dtype=np.float64).reshape(dim, dim)
+    spacing = np.asarray(image.GetSpacing(), dtype=np.float64)
+    origin = np.asarray(image.GetOrigin(), dtype=np.float64)
+    return direction, spacing, origin
+
+
+def continuous_index_to_physical(image: sitk.Image, indices: np.ndarray) -> np.ndarray:
+    """Vectorised ``sitk.Image.TransformContinuousIndexToPhysicalPoint``.
+
+    SimpleITK only transforms one point per call; looping over every voxel of
+    a label map costs seconds per patient, whereas the mapping is a single
+    affine ``origin + D @ (spacing * index)``.
+
+    Args:
+        image: Image whose geometry defines the mapping.
+        indices: Array of shape (..., dim) in SimpleITK (x, y, z) order.
+
+    Returns:
+        Physical points with the same shape as ``indices``.
+    """
+    direction, spacing, origin = _image_affine(image)
+    indices = np.asarray(indices, dtype=np.float64)
+    return origin + (indices * spacing) @ direction.T
+
+
+def physical_to_continuous_index(image: sitk.Image, points: np.ndarray) -> np.ndarray:
+    """Vectorised ``sitk.Image.TransformPhysicalPointToContinuousIndex``.
+
+    Args:
+        image: Image whose geometry defines the mapping.
+        points: Array of shape (..., dim) in physical space.
+
+    Returns:
+        Continuous indices in SimpleITK (x, y, z) order, same shape as ``points``.
+    """
+    direction, spacing, origin = _image_affine(image)
+    points = np.asarray(points, dtype=np.float64)
+    return np.linalg.solve(direction, (points - origin).T).T / spacing
