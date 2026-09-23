@@ -1,5 +1,6 @@
 #################################################################################################################################################
-# This script takes as input the statistics_thickness_per_segment.csv and creates a scatter plot for the volume and thickness of each segment across all patients
+# This script takes as input the statistics_thickness_per_segment.csv and creates scatter plots for
+# the mean/median thickness and the volume/median thickness of each segment across all patients
 #################################################################################################################################################
 
 import os
@@ -11,30 +12,45 @@ from dotenv import load_dotenv
 
 def plot_volume_vs_thickness(data, output_path):
     """
-    Create a scatter plot of volume vs. median myocardial thickness.
+    Create a figure with two scatter plots: mean vs. median myocardial
+    thickness, and volume vs. median myocardial thickness.
     Each segment is shown with a color from a gradient colormap,
     ordered from segment 1 (start color) to segment 17 (end color).
     """
 
-    plt.figure(figsize=(10, 7))
+    fig, (ax_mean, ax_volume) = plt.subplots(1, 2, figsize=(18, 7))
 
     cmap = plt.get_cmap("viridis")
     norm = Normalize(vmin=1, vmax=17)
 
     for segment, segment_data in data.groupby("segment"):
-        plt.scatter(
-            segment_data["volume_ml"],
+        color = cmap(norm(segment))
+
+        ax_mean.scatter(
+            segment_data["mean_thickness"],
             segment_data["median_thickness"],
             label=f"Segment {segment}",
-            color=cmap(norm(segment)),
+            color=color,
             alpha=0.7
         )
 
-    plt.xlabel("Volume (mL)")
-    plt.ylabel("Median thickness (mm)")
-    plt.title("Volume vs. median myocardial thickness")
+        ax_volume.scatter(
+            segment_data["volume_ml"],
+            segment_data["median_thickness"],
+            label=f"Segment {segment}",
+            color=color,
+            alpha=0.7
+        )
 
-    plt.legend(
+    ax_mean.set_xlabel("Mean thickness (mm)")
+    ax_mean.set_ylabel("Median thickness (mm)")
+    ax_mean.set_title("Mean vs. median myocardial thickness")
+
+    ax_volume.set_xlabel("Volume (mL)")
+    ax_volume.set_ylabel("Median thickness (mm)")
+    ax_volume.set_title("Volume vs. median myocardial thickness")
+
+    ax_volume.legend(
         title="Segment",
         bbox_to_anchor=(1.05, 1),
         loc="upper left"
