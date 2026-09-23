@@ -42,18 +42,22 @@ def plot_volume_vs_thickness(data, output_path):
             alpha=0.7
         )
 
-    ax_mean.set_xlabel("Mean thickness (mm)")
-    ax_mean.set_ylabel("Median thickness (mm)")
-    ax_mean.set_title("Mean vs. median myocardial thickness")
+    ax_mean.set_xlabel("Mean thickness (mm)", fontsize=16)
+    ax_mean.set_ylabel("Median thickness (mm)", fontsize=16)
+    ax_mean.set_title("Mean vs. median myocardial thickness", fontsize=18)
+    ax_mean.tick_params(axis="both", labelsize=14)
 
-    ax_volume.set_xlabel("Volume (mL)")
-    ax_volume.set_ylabel("Median thickness (mm)")
-    ax_volume.set_title("Volume vs. median myocardial thickness")
+    ax_volume.set_xlabel("Volume (mL)", fontsize=16)
+    ax_volume.set_ylabel("Median thickness (mm)", fontsize=16)
+    ax_volume.set_title("Volume vs. median myocardial thickness", fontsize=18)
+    ax_volume.tick_params(axis="both", labelsize=14)
 
     ax_volume.legend(
         title="Segment",
         bbox_to_anchor=(1.05, 1),
-        loc="upper left"
+        loc="upper left",
+        fontsize=14,
+        title_fontsize=15
     )
 
     plt.tight_layout()
