@@ -6,9 +6,9 @@ patient gets its own log file. Finished patients (``done.json`` present) are ski
 interrupted batch resumes where it stopped.
 
 Examples:
-    uv run LVM_thickness/main_pipeline.py                       # everything, workers sized to free RAM
-    uv run LVM_thickness/main_pipeline.py --patients 1 2 3 --workers 2
-    uv run LVM_thickness/main_pipeline.py --shard 0/8           # cluster: this job takes every 8th patient
+    uv run LVM_thickness/main_pipeline.py --dataset ImageCAS_1-200       # everything, into output/ImageCAS_1-200_2.5mm
+    uv run LVM_thickness/main_pipeline.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5 --patients 1 2 3 --workers 2
+    uv run LVM_thickness/main_pipeline.py --dataset ImageCAS_1-200 --shard 0/8   # cluster: every 8th patient
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from tqdm import tqdm
 
 from main_single import load_environment
-from pipeline import PatientPaths, discover_patients, patient_paths
+from pipeline import AORTA_EXCLUSION_MM, PatientPaths, discover_patients, patient_paths, run_output_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKER_SCRIPT = os.path.join(HERE, "main_single.py")
@@ -110,7 +110,7 @@ class BatchRunner:
 
     Args:
         args: Parsed command-line arguments.
-        output_dir: Parent folder of the per-patient output folders.
+        output_dir: Parent of all output: the run folder is ``<output_dir>/<dataset>_<aorta_exclusion_mm>mm``.
         threads: Native threads allowed per patient subprocess.
     """
 
@@ -124,13 +124,14 @@ class BatchRunner:
 
     def command(self, patient_id: str) -> list[str]:
         """Command line that processes one patient."""
-        cmd = [sys.executable, WORKER_SCRIPT, "--patient-id", patient_id, "--output-dir", self.output_dir]
+        cmd = [
+            sys.executable, WORKER_SCRIPT, "--patient-id", patient_id, "--output-dir", self.output_dir,
+            "--dataset", self.args.dataset, "--aorta-exclusion-mm", str(self.args.aorta_exclusion_mm),
+        ]
         if self.args.no_plots:
             cmd.append("--no-plots")
         if not self.args.debug_meshes:
             cmd.append("--no-debug-meshes")
-        if self.args.aorta_exclusion_mm is not None:
-            cmd += ["--aorta-exclusion-mm", str(self.args.aorta_exclusion_mm)]
         return cmd
 
     def run_one(self, paths: PatientPaths) -> dict[str, object]:
@@ -203,13 +204,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard", default=None, metavar="INDEX/COUNT",
                         help="Take every COUNT-th patient starting at INDEX, e.g. $SLURM_ARRAY_TASK_ID/8.")
     parser.add_argument("--limit", type=int, default=None, help="Process at most this many patients.")
-    parser.add_argument("--output-dir", default=None, help="Parent output folder (default: <PROJECT_ROOT>/output).")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name; results go to <output-dir>/<dataset>_<aorta-exclusion-mm>/.")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
     parser.add_argument("--overwrite", action="store_true", help="Reprocess patients that already have done.json.")
     parser.add_argument("--no-plots", action="store_true", help="Skip the histogram and bullseye figures (~25s each).")
     parser.add_argument("--debug-meshes", action="store_true", help="Also write the QA-only vectors.vtk mesh (~7s).")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=None,
-                        help="Ignore thickness within this distance (mm) of the aorta; 0 disables it "
-                             "(default: utils.AORTA_EXCLUSION_MM, 2.5).")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Ignore thickness within this distance (mm) of the aorta; 0 disables it "
+                             f"(default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--timeout-min", type=float, default=30.0,
                         help="Kill a patient that runs longer than this (default: 30).")
     parser.add_argument("--dry-run", action="store_true", help="List what would run and exit.")
@@ -224,7 +228,8 @@ def main() -> int:
     """
     args = parse_args()
     root, folder = load_environment()
-    output_dir = os.path.abspath(args.output_dir or os.path.join(root, "output"))
+    parent_dir = os.path.abspath(args.output_dir or os.path.join(root, "output"))
+    output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, parent_dir)
 
     selected = select_patients(args, root, folder)
     all_paths = [patient_paths(root, folder, pid, output_dir) for pid in selected]
@@ -249,7 +254,7 @@ def main() -> int:
     os.makedirs(output_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     summary_path = os.path.join(output_dir, f"batch_summary_{stamp}.csv")
-    runner = BatchRunner(args, output_dir, threads)
+    runner = BatchRunner(args, parent_dir, threads)
     results: list[dict[str, object]] = []
     start = time.perf_counter()
 

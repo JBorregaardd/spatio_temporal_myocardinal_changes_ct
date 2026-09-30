@@ -25,6 +25,8 @@ from matplotlib.colors import Normalize
 
 import imageio
 
+from pipeline import AORTA_EXCLUSION_MM
+
 
 def read_excel_for_best_phase(root, 
                               file_must_exist=True, 
@@ -871,7 +873,6 @@ def ring_angle(y: np.ndarray, x: np.ndarray, y_0: float, x_0: float) -> np.ndarr
 
 AORTA_ID = 6
 LV_REGION_IDS = (1, 3)
-AORTA_EXCLUSION_MM = 2.5
 RING_RADIUS_MM = 0.5
 
 

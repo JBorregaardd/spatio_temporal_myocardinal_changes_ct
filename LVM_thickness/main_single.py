@@ -9,7 +9,7 @@ import traceback
 
 from dotenv import load_dotenv
 
-from pipeline import patient_paths, process_patient
+from pipeline import AORTA_EXCLUSION_MM, patient_paths, process_patient, run_output_dir
 
 
 def load_environment() -> tuple[str, str]:
@@ -43,16 +43,20 @@ def main() -> int:
         help="Patient id to process (default: $PATIENT_ID from .env, else '1'). "
              "Useful for cluster array jobs, e.g. --patient-id $SLURM_ARRAY_TASK_ID.",
     )
-    parser.add_argument("--output-dir", default=None, help="Parent output folder (default: <PROJECT_ROOT>/output).")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name; results go to <output-dir>/<dataset>_<aorta-exclusion-mm>/<patient-id>.")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
     parser.add_argument("--no-plots", action="store_true", help="Skip the histogram and bullseye figures.")
     parser.add_argument("--no-debug-meshes", action="store_true", help="Skip writing the QA-only vectors.vtk mesh.")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=None,
-                        help="Ignore thickness within this distance (mm) of the aorta; 0 disables it "
-                             "(default: utils.AORTA_EXCLUSION_MM, 2.5).")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Ignore thickness within this distance (mm) of the aorta; 0 disables it "
+                             f"(default: {AORTA_EXCLUSION_MM}).")
     args = parser.parse_args()
 
     root, folder = load_environment()
-    paths = patient_paths(root, folder, args.patient_id, args.output_dir)
+    output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
+    paths = patient_paths(root, folder, args.patient_id, output_dir)
 
     print(f"Checking files for patient {paths.patient_id}:")
     print(f"  Image:        {paths.image} -> Exists: {os.path.exists(paths.image)}")

@@ -1,12 +1,19 @@
 #################################################################################################################################################
 # This script takes as input the statistics_thickness_per_segment.csv and identifies outliers based on the median thickness values for each segment across all patients.
+# It reads <output>/<dataset>_<aorta-exclusion-mm>/statistics/ (written by statistics_analysis.py) and saves the outliers to its outliers/ subfolder.
+# e.g. uv run LVM_thickness/analysis/outlier_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5
 #################################################################################################################################################
 
 import os
+import sys
 import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
 
 
 def detect_outliers_per_segment(data):
@@ -82,19 +89,38 @@ def plot_segment(data, segment, output_path):
 
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Find per-segment thickness outliers in one pipeline run.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run to analyse, as given to main_pipeline.py.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}). "
+                             f"Together with --dataset it selects <output-dir>/<dataset>_<aorta-exclusion-mm>.")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    return parser.parse_args()
+
+
 def main():
+
+    args = parse_args()
 
     # Find project root
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     load_dotenv(os.path.join(project_root, ".env"))
     root = os.environ["PROJECT_ROOT"]
 
-    path = os.path.join(root,"output","statistics","statistics_thickness_per_segment.csv")
-
+    statistics_folder = os.path.join(
+        run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir), "statistics"
+    )
+    path = os.path.join(statistics_folder, "statistics_thickness_per_segment.csv")
+    if not os.path.isfile(path):
+        raise SystemExit(f"{path} not found; run statistics_analysis.py with the same --dataset first.")
 
     data = pd.read_csv(path)
     print(f"Number of patients: {data['patient_id'].nunique()}")
-    output_folder = os.path.join(root,"output","statistics","outliers")
+    output_folder = os.path.join(statistics_folder, "outliers")
     os.makedirs(output_folder, exist_ok=True)
 
     # --------------------------------------------------

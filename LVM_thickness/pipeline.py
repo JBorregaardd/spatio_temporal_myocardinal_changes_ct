@@ -12,6 +12,7 @@ from typing import Callable, Iterator
 SCAN_TYPE = "ED"
 IMAGE_SUBDIR = os.path.join("data", "1_200")
 DONE_MARKER = "done.json"
+AORTA_EXCLUSION_MM = 2.5
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,22 @@ def patient_paths(root: str, segmentation_folder: str, patient_id: str, output_d
     )
 
 
+def run_output_dir(root: str, dataset: str, aorta_exclusion_mm: float, output_dir: str | None = None) -> str:
+    """Folder one run writes all its patients to: ``<output_dir>/<dataset>_<aorta_exclusion_mm>``.
+
+    Args:
+        root: Project root.
+        dataset: Dataset name.
+        aorta_exclusion_mm: Aortic exclusion distance in mm, e.g. 2.5 gives ``<dataset>_2.5``.
+        output_dir: Parent of the run folders; defaults to ``<root>/output``.
+
+    Returns:
+        Absolute path of the run folder.
+    """
+    parent = output_dir or os.path.join(root, "output")
+    return os.path.abspath(os.path.join(parent, f"{dataset}_{aorta_exclusion_mm:g}mm")) # end with mm e.g. "2.5mm"
+
+
 def discover_patients(root: str, segmentation_folder: str) -> list[str]:
     """List patient ids that have both a CT image and a heart segmentation.
 
@@ -103,7 +120,7 @@ def process_patient(
     plots: bool = True,
     save_debug_meshes: bool = True,
     log: Callable[[str], None] = print,
-    aorta_exclusion_mm: float | None = None,
+    aorta_exclusion_mm: float = AORTA_EXCLUSION_MM,
 ) -> dict[str, float]:
     """Run every pipeline step for one patient, from scratch.
 
@@ -118,7 +135,7 @@ def process_patient(
         save_debug_meshes: Write ``surfaces/vectors.vtk``, a QA-only mesh (~7s).
         log: Receives one progress line per step.
         aorta_exclusion_mm: Mesh vertices within this distance (mm) of the aorta are left out of the thickness
-            statistics and the bullseye plot; 0 disables it. None uses ``utils.AORTA_EXCLUSION_MM``.
+            statistics and the bullseye plot; 0 disables it.
 
     Returns:
         Seconds spent in each step.
@@ -138,9 +155,6 @@ def process_patient(
     )
     from utils import bullseye, utils
     from vtk.util.numpy_support import vtk_to_numpy
-
-    if aorta_exclusion_mm is None:
-        aorta_exclusion_mm = utils.AORTA_EXCLUSION_MM
 
     for required in (paths.image, paths.segmentation):
         if not os.path.isfile(required):

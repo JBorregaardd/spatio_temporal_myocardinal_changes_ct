@@ -3,7 +3,8 @@
 # Thickness measured within utils.AORTA_EXCLUSION_MM of the aorta (the LV outflow tract, not a wall) is left out.
 # It also calculates myocardial volume and mass per segment, and patient-level measures (LV mass, LV diastolic volume, LV M/V ratio,
 # LA volume, maximal wall thickness), indexed to body surface area when a demographics table is given.
-# It saves the results to CSV files in the output folder.
+# It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in that folder.
+# e.g. uv run LVM_thickness/analysis/statistics_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5 --all
 #################################################################################################################################################
 
 import os
@@ -23,6 +24,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
 from utils import utils  # noqa: E402
 
 
@@ -106,10 +108,10 @@ def get_scalar_ring_mm_coordinates(total_path, mesh_name, aorta_exclusion_mm=uti
     return scalar_image
 
 
-def calculate_statistics_thickness_per_segment(folder, mesh_name, total_path):
+def calculate_statistics_thickness_per_segment(folder, mesh_name, total_path, aorta_exclusion_mm=AORTA_EXCLUSION_MM):
 
     # Get thickness values on the myocardium ring
-    scalar_image = get_scalar_ring_mm_coordinates(total_path, mesh_name)
+    scalar_image = get_scalar_ring_mm_coordinates(total_path, mesh_name, aorta_exclusion_mm)
 
     # Read the transform
     transform_path = os.path.join(folder, "lv17_transform.txt")
@@ -321,14 +323,16 @@ def analyse_patient(
     output_dir: str,
     segmentation_folder: str,
     demographics: dict[str, str] | None = None,
+    aorta_exclusion_mm: float = AORTA_EXCLUSION_MM,
 ) -> tuple[list[dict], dict]:
     """Run the full analysis for one patient and write that patient's CSVs into its output folder.
 
     Args:
         patient_id: Dataset id.
-        output_dir: The pipeline's output folder, containing ``<patient_id>/``.
+        output_dir: The pipeline's run folder, containing ``<patient_id>/``.
         segmentation_folder: Folder containing ``<patient_id>.heart.nii.gz``.
         demographics: This patient's demographics row, if available.
+        aorta_exclusion_mm: Aortic exclusion distance in mm; should match the run folder's.
 
     Returns:
         Tuple of (per-segment rows, patient summary row).
@@ -338,7 +342,7 @@ def analyse_patient(
     total_path = os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz")
     lv17_path = os.path.join(folder, "segmentations", "lv17", "lv17.nii.gz")
 
-    table = calculate_statistics_thickness_per_segment(folder, mesh_name, total_path)
+    table = calculate_statistics_thickness_per_segment(folder, mesh_name, total_path, aorta_exclusion_mm)
 
     heart = sitk.ReadImage(total_path)
     lv17 = sitk.ReadImage(lv17_path)
@@ -370,10 +374,16 @@ if __name__ == "__main__":
     load_dotenv(os.path.join(project_root, ".env"))
 
     root = os.environ["PROJECT_ROOT"]
-    output_dir = os.path.join(root, "output")
     segmentation_folder = os.environ.get("SEGMENTATION_FOLDER", os.path.join(root, "data", "TotalSegmentator"))
 
     parser = argparse.ArgumentParser(description="Run the LVM thickness analysis for one, several or all patients.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run to analyse, as given to main_pipeline.py.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}). "
+                             f"Together with --dataset it selects <output-dir>/<dataset>_<aorta-exclusion-mm>.")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument(
         "--patient-ids",
@@ -403,6 +413,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
+    if not os.path.isdir(output_dir):
+        raise SystemExit(f"Run folder not found: {output_dir}")
+    print(f"Run folder: {output_dir}")
+
     if args.all:
         patient_ids = find_finished_patients(output_dir)
         if not patient_ids:
@@ -425,7 +440,10 @@ if __name__ == "__main__":
     print(f"Analysing {len(patient_ids)} patient(s) with {args.workers} worker(s)...")
     results = {}
     failed = {}
-    jobs = [(pid, output_dir, segmentation_folder, demographics.get(pid)) for pid in patient_ids]
+    jobs = [
+        (pid, output_dir, segmentation_folder, demographics.get(pid), args.aorta_exclusion_mm)
+        for pid in patient_ids
+    ]
 
     def record(done: int, outcome: tuple) -> None:
         pid, table, summary, error, seconds = outcome
