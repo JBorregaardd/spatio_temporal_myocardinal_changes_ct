@@ -129,6 +129,8 @@ class BatchRunner:
             cmd.append("--no-plots")
         if not self.args.debug_meshes:
             cmd.append("--no-debug-meshes")
+        if self.args.aorta_exclusion_mm is not None:
+            cmd += ["--aorta-exclusion-mm", str(self.args.aorta_exclusion_mm)]
         return cmd
 
     def run_one(self, paths: PatientPaths) -> dict[str, object]:
@@ -205,6 +207,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true", help="Reprocess patients that already have done.json.")
     parser.add_argument("--no-plots", action="store_true", help="Skip the histogram and bullseye figures (~25s each).")
     parser.add_argument("--debug-meshes", action="store_true", help="Also write the QA-only vectors.vtk mesh (~7s).")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=None,
+                        help="Ignore thickness within this distance (mm) of the aorta; 0 disables it "
+                             "(default: utils.AORTA_EXCLUSION_MM, 2.5).")
     parser.add_argument("--timeout-min", type=float, default=30.0,
                         help="Kill a patient that runs longer than this (default: 30).")
     parser.add_argument("--dry-run", action="store_true", help="List what would run and exit.")

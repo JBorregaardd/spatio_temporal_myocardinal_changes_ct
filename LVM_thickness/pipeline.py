@@ -103,6 +103,7 @@ def process_patient(
     plots: bool = True,
     save_debug_meshes: bool = True,
     log: Callable[[str], None] = print,
+    aorta_exclusion_mm: float | None = None,
 ) -> dict[str, float]:
     """Run every pipeline step for one patient, from scratch.
 
@@ -116,6 +117,8 @@ def process_patient(
         plots: Write the thickness histograms and the bullseye plot.
         save_debug_meshes: Write ``surfaces/vectors.vtk``, a QA-only mesh (~7s).
         log: Receives one progress line per step.
+        aorta_exclusion_mm: Mesh vertices within this distance (mm) of the aorta are left out of the thickness
+            statistics and the bullseye plot; 0 disables it. None uses ``utils.AORTA_EXCLUSION_MM``.
 
     Returns:
         Seconds spent in each step.
@@ -135,6 +138,9 @@ def process_patient(
     )
     from utils import bullseye, utils
     from vtk.util.numpy_support import vtk_to_numpy
+
+    if aorta_exclusion_mm is None:
+        aorta_exclusion_mm = utils.AORTA_EXCLUSION_MM
 
     for required in (paths.image, paths.segmentation):
         if not os.path.isfile(required):
@@ -170,7 +176,7 @@ def process_patient(
     with step("4_thickness", "Calculating thickness per segment"):
         mesh_17 = utils.read_vtk_mesh(os.path.join(save_dir, "surfaces", "myocardium_17.vtk"))
         vertices = vtk_to_numpy(mesh_thick.GetPoints().GetData())
-        keep = utils.aorta_keep_mask(sitk.ReadImage(paths.segmentation), vertices)
+        keep = utils.aorta_keep_mask(sitk.ReadImage(paths.segmentation), vertices, aorta_exclusion_mm)
         thickness = thickness_in_17_seg(mesh_thick, mesh_17, keep=keep)
         with open(os.path.join(save_dir, "thickness.json"), "w") as f:
             json.dump(dict(thickness), f)
@@ -196,6 +202,7 @@ def process_patient(
                 global_min=0,
                 global_max=20,
                 savename=f"thickness_{paths.patient_id.split('_')[-1]}_{SCAN_TYPE}",
+                aorta_exclusion_mm=aorta_exclusion_mm,
             )
 
     peak = peak_memory_bytes()

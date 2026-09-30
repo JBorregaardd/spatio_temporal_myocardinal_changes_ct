@@ -100,7 +100,8 @@ def generate_polar_values(path,
                           scalar_ring_ids=None,
                           return_xy=True,
                           exists_ok=True,
-                          lvm=True):
+                          lvm=True,
+                          aorta_exclusion_mm=utils.AORTA_EXCLUSION_MM):
     """
       1. read dist_mesh with vtk
       2. convert mesh to segmentation with one ring of values
@@ -117,7 +118,8 @@ def generate_polar_values(path,
     if scalar_ring_ids is not None:
         scalar_image = get_scalar_values_from_ring_points(total_path, mesh_name, scalar_ring_ids, label_total)
     else:
-        scalar_image = get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=exists_ok, lvm=lvm)
+        scalar_image = get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=exists_ok, lvm=lvm,
+                                                      aorta_exclusion_mm=aorta_exclusion_mm)
 
     sitk.WriteImage(scalar_image, os.path.join(path, "segmentations", f"mm_{os.path.basename(mesh_name).split('.')[0]}_ring.nii.gz"))
     # read transform
@@ -223,8 +225,10 @@ def fill_holes_in_bullseye(x, y, polar_vals, n_points_per_ring=500, n_neighbors=
     X, Y, polar_output = X[mask], Y[mask], polar_output[mask]
     return X, Y, polar_output
 
-def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=None, global_min=None, global_max=None, savename=None, show_plot=False):
-    x, y, polar_vals = generate_polar_values(folder, mesh_path, total_path, scalar_ring_ids=scalar_ring_ids, lvm=False)
+def create_single_bs_from_mesh(folder, mesh_path, total_path, scalar_ring_ids=None, global_min=None, global_max=None, savename=None, show_plot=False,
+                               aorta_exclusion_mm=utils.AORTA_EXCLUSION_MM):
+    x, y, polar_vals = generate_polar_values(folder, mesh_path, total_path, scalar_ring_ids=scalar_ring_ids, lvm=False,
+                                             aorta_exclusion_mm=aorta_exclusion_mm)
     x, y, polar_vals = fill_holes_in_bullseye(x, y, polar_vals, 750, 5)
     # x = -x
     rad, theta = utils.cartesian2polar(x, y)

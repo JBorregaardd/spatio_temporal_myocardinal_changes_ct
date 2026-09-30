@@ -46,6 +46,9 @@ def main() -> int:
     parser.add_argument("--output-dir", default=None, help="Parent output folder (default: <PROJECT_ROOT>/output).")
     parser.add_argument("--no-plots", action="store_true", help="Skip the histogram and bullseye figures.")
     parser.add_argument("--no-debug-meshes", action="store_true", help="Skip writing the QA-only vectors.vtk mesh.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=None,
+                        help="Ignore thickness within this distance (mm) of the aorta; 0 disables it "
+                             "(default: utils.AORTA_EXCLUSION_MM, 2.5).")
     args = parser.parse_args()
 
     root, folder = load_environment()
@@ -65,6 +68,7 @@ def main() -> int:
             plots=not args.no_plots,
             save_debug_meshes=not args.no_debug_meshes,
             log=lambda msg: print(msg, flush=True),
+            aorta_exclusion_mm=args.aorta_exclusion_mm,
         )
     except Exception:
         print("\n[ERROR DURING EXECUTION]")
