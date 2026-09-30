@@ -1,5 +1,6 @@
 #################################################################################################################################################
 # This script takes as input the output folder from the LVM thickness pipeline and calculates the median thickness for each of the 17 segments.
+# Thickness measured within utils.AORTA_EXCLUSION_MM of the aorta (the LV outflow tract, not a wall) is left out.
 # It also calculates myocardial volume and mass per segment, and patient-level measures (LV mass, LV diastolic volume, LV M/V ratio,
 # LA volume, maximal wall thickness), indexed to body surface area when a demographics table is given.
 # It saves the results to CSV files in the output folder.
@@ -16,8 +17,13 @@ import numpy as np
 
 import SimpleITK as sitk
 import vtk
+from vtk.util.numpy_support import vtk_to_numpy
 from skimage import morphology
 from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils import utils  # noqa: E402
 
 
 LVM_ID = 1
@@ -61,7 +67,21 @@ def read_vtk_mesh(path):
     return output
 
 
-def get_scalar_ring_mm_coordinates(total_path, mesh_name):
+def get_scalar_ring_mm_coordinates(total_path, mesh_name, aorta_exclusion_mm=utils.AORTA_EXCLUSION_MM):
+    """Thickness on the outer LV+myocardium ring voxels, as an image on the segmentation's grid.
+
+    Each ring voxel takes the mean thickness of the mesh vertices within ``utils.RING_RADIUS_MM``, else its nearest
+    vertex's. Vertices within ``aorta_exclusion_mm`` of the aorta are ignored (see ``utils.aorta_distance_at_points``);
+    ring voxels left without a value are 0 and dropped from the statistics.
+
+    Args:
+        total_path: TotalSegmentator heart-chambers segmentation path.
+        mesh_name: Thickness mesh path (``dist_source.vtk``).
+        aorta_exclusion_mm: Aortic exclusion distance in mm; 0 disables it.
+
+    Returns:
+        Thickness image, 0 outside the ring and at excluded voxels.
+    """
     label_total = sitk.ReadImage(total_path)
     label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID)
 
@@ -70,25 +90,16 @@ def get_scalar_ring_mm_coordinates(total_path, mesh_name):
     im_ring = im_ring.astype(np.uint8)
 
     mesh = read_vtk_mesh(mesh_name)
-
-    locator = vtk.vtkPointLocator()
-    locator.SetDataSet(mesh)
-    locator.BuildLocator()
-    radius = 0.5 # mm
+    mesh_points = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
+    mesh_scalars = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
 
     ring_nnz = im_ring.nonzero()
+    ring_points = utils.continuous_index_to_physical(label_total, np.stack(ring_nnz, axis=1))
+    keep = utils.aorta_keep_mask(label_total, mesh_points, aorta_exclusion_mm)
+    values = utils.MeshNeighbourhood.build(ring_points, mesh_points).values(mesh_scalars, keep)
+
     scalar_ring = np.zeros_like(im_ring, dtype=np.float64)
-    for x, y, z in zip(*ring_nnz):
-        indices = np.array([x, y, z], dtype=np.float64)
-        point = label_total.TransformContinuousIndexToPhysicalPoint(indices)
-        ids = vtk.vtkIdList()
-        locator.FindPointsWithinRadius(radius, point, ids)
-        if ids.GetNumberOfIds() == 0:
-            idx = locator.FindClosestPoint(point)
-            scalar_ring[x, y, z] = mesh.GetPointData().GetScalars().GetTuple1(idx)
-        else:
-            scalar_ring[x, y, z] = np.mean([mesh.GetPointData().GetScalars().GetTuple1(ids.GetId(i)) for i in range(ids.GetNumberOfIds())])
-        scalar_ring[x, y, z] += 1e-10 # to avoid 0 values
+    scalar_ring[ring_nnz] = np.where(np.isnan(values), 0, values + 1e-10) # to avoid 0 values
 
     scalar_image = sitk.GetImageFromArray(scalar_ring.transpose(2, 1, 0))
     scalar_image.CopyInformation(label_total)

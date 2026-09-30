@@ -163,3 +163,70 @@ def test_aorta_distance_matches_full_volume_distance_map() -> None:
     assert near.any() and (~near).any()
     np.testing.assert_allclose(got[near], want[near])
     assert np.all(got[~near] > cap)
+
+
+def _ring_values_reference(points: np.ndarray, vertices: np.ndarray, scalars: np.ndarray) -> np.ndarray:
+    """The original statistics_analysis.py per-voxel loop: mean within the radius, else the nearest vertex."""
+    poly = _polydata(vertices)
+    locator = vtk.vtkPointLocator()
+    locator.SetDataSet(poly)
+    locator.BuildLocator()
+    values = np.empty(len(points))
+    for i, point in enumerate(points):
+        ids = vtk.vtkIdList()
+        locator.FindPointsWithinRadius(utils.RING_RADIUS_MM, point, ids)
+        if ids.GetNumberOfIds() == 0:
+            values[i] = scalars[locator.FindClosestPoint(point)]
+        else:
+            values[i] = np.mean([scalars[ids.GetId(j)] for j in range(ids.GetNumberOfIds())])
+    return values
+
+
+def test_mesh_neighbourhood_matches_reference_loop() -> None:
+    """Without an exclusion mask the ring values equal the original radius-mean / nearest-vertex loop."""
+    rng = np.random.default_rng(4)
+    vertices = rng.uniform(0, 10, size=(2000, 3))
+    scalars = rng.uniform(0, 20, size=2000)
+    points = rng.uniform(0, 10, size=(500, 3))
+
+    got = utils.MeshNeighbourhood.build(points, vertices).values(scalars)
+    np.testing.assert_allclose(got, _ring_values_reference(points, vertices, scalars))
+
+
+def test_mesh_neighbourhood_ignores_excluded_vertices() -> None:
+    """Excluded vertices never contribute; a point whose fallback vertex is excluded gets no value."""
+    vertices = np.array([[0.0, 0, 0], [0.3, 0, 0], [5.0, 0, 0], [9.0, 0, 0]])
+    scalars = np.array([1.0, 3.0, 7.0, 11.0])
+    keep = np.array([True, False, False, True])
+    points = np.array([[0.1, 0, 0], [0.35, 0, 0], [5.0, 0, 0], [8.0, 0, 0]])
+
+    got = utils.MeshNeighbourhood.build(points, vertices).values(scalars, keep)
+    np.testing.assert_allclose(got[[0, 1, 3]], [1.0, 1.0, 11.0])
+    assert np.isnan(got[2])
+
+
+def test_thickness_in_17_seg_drops_unkept_vertices() -> None:
+    """A keep mask gives the same result as running on the mesh without the dropped vertices."""
+    rng = np.random.default_rng(5)
+    seg_points = rng.uniform(0, 50, size=(300, 3))
+    seg_labels = rng.integers(1, 18, size=300).astype(np.float64)
+    thick_points = rng.uniform(0, 50, size=(1000, 3))
+    thick_values = rng.uniform(0, 20, size=1000)
+    keep = rng.random(1000) > 0.3
+    mesh_17 = _polydata(seg_points, seg_labels)
+
+    got = thickness_in_17_seg(_polydata(thick_points, thick_values), mesh_17, keep=keep)
+    want = thickness_in_17_seg(_polydata(thick_points[keep], thick_values[keep]), mesh_17)
+    assert dict(got) == dict(want)
+
+
+def test_aorta_keep_mask_thresholds_distance() -> None:
+    """Points within the exclusion distance of the aorta are dropped; a distance of 0 keeps everything."""
+    labels = np.zeros((20, 20, 20), dtype=np.uint8)
+    labels[2:10, 2:18, 2:18] = 3
+    labels[12:16, 2:18, 2:18] = utils.AORTA_ID
+    image = sitk.GetImageFromArray(labels)
+    points = np.array([[10.0, 10, 11], [10.0, 10, 9], [10.0, 10, 5]])
+
+    np.testing.assert_array_equal(utils.aorta_keep_mask(image, points, 2.5), [False, True, True])
+    np.testing.assert_array_equal(utils.aorta_keep_mask(image, points, 0), [True, True, True])

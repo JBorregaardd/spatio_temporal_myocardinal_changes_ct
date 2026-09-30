@@ -375,12 +375,14 @@ def mesh_vector_allignment(path, mesh_source, mesh_target, num_iterations=5, num
     vectors = [(i, source_points[i], vecs[i]) for i in range(num_source_pts)]
     return mesh_source, mesh_target, vectors
 
-def thickness_in_17_seg(mesh_thick, mesh_17):
+def thickness_in_17_seg(mesh_thick, mesh_17, keep=None):
     """Group each thickness measurement by the AHA segment of its nearest 17-segment mesh point.
 
     Args:
         mesh_thick: Mesh whose point scalars are wall thickness.
         mesh_17: Mesh whose point scalars are segment labels.
+        keep: Optional boolean mask over ``mesh_thick``'s points; measurements where it is False are dropped, e.g.
+            ``utils.aorta_keep_mask`` for the LV outflow tract.
 
     Returns:
         Mapping of segment label (float, as the JSON keys have always been) to thickness values.
@@ -389,6 +391,8 @@ def thickness_in_17_seg(mesh_thick, mesh_17):
     seg_points = vtk_to_numpy(mesh_17.GetPoints().GetData()).astype(np.float64)
     distances = vtk_to_numpy(mesh_thick.GetPointData().GetScalars()).astype(np.float64)
     seg_labels = vtk_to_numpy(mesh_17.GetPointData().GetScalars()).astype(np.float64)
+    if keep is not None:
+        thick_points, distances = thick_points[keep], distances[keep]
 
     _, closest = cKDTree(seg_points).query(thick_points, workers=utils.num_threads())
     segments = seg_labels[closest]

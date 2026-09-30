@@ -9,6 +9,8 @@ import SimpleITK as sitk
 from skimage.morphology import ball
 from scipy.ndimage import center_of_mass, distance_transform_edt
 from scipy.interpolate import interpn, make_interp_spline
+from scipy.spatial import cKDTree
+from dataclasses import dataclass
 import pandas as pd
 from PIL import Image
 import re
@@ -843,26 +845,49 @@ def physical_to_continuous_index(image: sitk.Image, points: np.ndarray) -> np.nd
     return np.linalg.solve(direction, (points - origin).T).T / spacing
 
 
+def ring_angle(y: np.ndarray, x: np.ndarray, y_0: float, x_0: float) -> np.ndarray:
+    """Angle of short-axis points around the LV centre, in the direction the AHA segments are numbered.
+
+    In the frame ``lv_generate_segments`` aligns the heart to (apex towards -z, RV along the x axis), the angle
+    increases anterior -> septal -> inferior -> lateral, so segments numbered upwards from the anterior RV insertion
+    follow the AHA convention (basal 1 anterior, 2 anteroseptal, 3 inferoseptal, ...). The segment generator and the
+    bullseye must use the same convention or the plotted wedges no longer match the labels.
+
+    The generator used to negate this angle, which mirrored the whole model: the ring started at the inferior RV
+    insertion and every segment but 14, 16 and 17 swapped with its AHA partner (1<->4, 2<->3, 5<->6, 7<->10, 8<->9,
+    11<->12, 13<->15). Checked against anatomy: AHA 2 is the septal segment bordering the aorta, 1 the anterior wall.
+
+    Args:
+        y: Row (y) indices of the points in the aligned short-axis slice.
+        x: Column (x) indices of the points.
+        y_0: Row index of the centre.
+        x_0: Column index of the centre.
+
+    Returns:
+        Angles in radians, in (-pi, pi].
+    """
+    return np.arctan2(np.asarray(y) - y_0, np.asarray(x) - x_0)
+
+
 AORTA_ID = 6
 LV_REGION_IDS = (1, 3)
+AORTA_EXCLUSION_MM = 2.5
+RING_RADIUS_MM = 0.5
 
 
 def aorta_distance_at_points(label_image: sitk.Image, points: np.ndarray, max_distance_mm: float) -> np.ndarray:
     """Distance in mm from each physical point to the nearest aorta voxel, exact up to ``max_distance_mm``.
 
-    Intended for excluding thickness measurements at the LV outflow tract. Not used by the pipeline yet; the choice
-    of how to handle the aortic region is pending.
+    Used through ``aorta_keep_mask`` to exclude thickness measurements at the LV outflow tract.
 
     Background: where the LV opens into the aorta, the inner and outer surfaces meet, so the ray-traced thickness
-    there is not a wall measurement - it runs from ~0 mm to a few mm. Averaged onto the bullseye/analysis ring voxels,
-    it pulls the basal segment bordering the aorta (segment 3 in our numbering) far below its neighbours, e.g.
-    3.8 mm vs 11.2 / 9.3 mm in segments 2 / 4 for ImageCAS patient 1. Value cutoffs do not fix it reliably (the
-    artefact is not near 0 everywhere). Dropping mesh vertices within 3 mm of the aorta *before* averaging did:
-    segment 3 came back in line with its neighbours for 8/8 test patients, no other segment moved by more than
-    0.03 mm, at the cost of 12-39% of segment 3's voxels. Usage::
-
-        vertices = vtk_to_numpy(mesh.GetPoints().GetData())
-        keep = aorta_distance_at_points(label_image, vertices, 3.0) > 3.0
+    there is not a wall measurement - it runs from ~0 mm to a few mm. Averaged onto the segment ring voxels, it pulls
+    the basal segment bordering the aorta (AHA 2, anteroseptal) below its neighbours. Value cutoffs do not fix it
+    reliably (the artefact is not near 0 everywhere); dropping mesh vertices close to the aorta *before* averaging
+    does. ``analysis/aorta_sensitivity_analysis.py`` sweeps the distance over 200 patients: segment 2 rises
+    steadily up to ~3 mm and slowly after that, so there is no sharp cut-off. ``AORTA_EXCLUSION_MM`` = 2.5 mm was
+    chosen to remove too little rather than too much; it costs a median ~24% of segment 2's voxels, and the largest
+    shift in any other segment is <0.01 mm for the median patient (~0.15 mm at the 95th percentile).
 
     The distance map is only computed inside the LV bounding box plus a ``max_distance_mm`` margin, which is exact
     up to that distance at a fraction of the cost of the full volume.
@@ -890,3 +915,85 @@ def aorta_distance_at_points(label_image: sitk.Image, points: np.ndarray, max_di
     distance = distance_transform_edt(~aorta, sampling=spacing)
     local = index - lo
     return distance[local[:, 0], local[:, 1], local[:, 2]]
+
+
+def aorta_keep_mask(
+    label_image: sitk.Image, points: np.ndarray, exclusion_mm: float = AORTA_EXCLUSION_MM
+) -> np.ndarray:
+    """Which points are far enough from the aorta to count as wall-thickness measurements.
+
+    Args:
+        label_image: TotalSegmentator heart-chambers segmentation (aorta = label 6).
+        points: (N, 3) physical points, e.g. the vertices of ``dist_source.vtk``.
+        exclusion_mm: Points within this distance of the aorta are dropped; 0 or less keeps every point.
+
+    Returns:
+        (N,) boolean mask, True for points to keep.
+    """
+    if exclusion_mm <= 0:
+        return np.ones(len(points), dtype=bool)
+    return aorta_distance_at_points(label_image, points, exclusion_mm) > exclusion_mm
+
+
+@dataclass(frozen=True)
+class MeshNeighbourhood:
+    """Which mesh vertices each query point (e.g. a segment ring voxel) takes its value from.
+
+    A point's value is the mean of the vertices within ``radius`` of it, or its nearest vertex's value when none are
+    that close. Building this once lets several scalar arrays or exclusion masks be applied without re-querying.
+
+    Attributes:
+        counts: (P,) number of vertices within the radius of each point.
+        flat: Concatenated vertex ids within the radius, grouped by point.
+        owner: Point index of each entry in ``flat``.
+        nearest: (P,) id of each point's nearest vertex.
+    """
+
+    counts: np.ndarray
+    flat: np.ndarray
+    owner: np.ndarray
+    nearest: np.ndarray
+
+    @classmethod
+    def build(cls, points: np.ndarray, vertices: np.ndarray, radius: float = RING_RADIUS_MM) -> "MeshNeighbourhood":
+        """Query the vertices around every point.
+
+        Args:
+            points: (P, 3) physical query points.
+            vertices: (V, 3) mesh vertices.
+            radius: Averaging radius in mm.
+
+        Returns:
+            The neighbourhood of every point.
+        """
+        tree = cKDTree(vertices)
+        neighbours = tree.query_ball_point(points, r=radius, workers=num_threads())
+        counts = np.fromiter((len(n) for n in neighbours), dtype=np.int64, count=len(neighbours))
+        flat = np.concatenate([np.asarray(n, dtype=np.int64) for n in neighbours if n] or [np.empty(0, np.int64)])
+        _, nearest = tree.query(points, workers=num_threads())
+        return cls(counts, flat, np.repeat(np.arange(len(points)), counts), nearest)
+
+    def values(self, scalars: np.ndarray, keep: np.ndarray | None = None) -> np.ndarray:
+        """Per-point mesh values, ignoring vertices that are not kept.
+
+        A point with no kept vertex within the radius falls back to its nearest vertex; if that vertex is not kept
+        either, the point has no value. Without ``keep`` this is the plain radius mean / nearest-vertex rule.
+
+        Args:
+            scalars: (V,) per-vertex values, e.g. wall thickness.
+            keep: (V,) boolean mask of vertices to use, e.g. from ``aorta_keep_mask``; None keeps all.
+
+        Returns:
+            (P,) values, NaN for points without a value.
+        """
+        scalars = np.asarray(scalars, dtype=np.float64)
+        n_points = len(self.counts)
+        if keep is None:
+            keep = np.ones(len(scalars), dtype=bool)
+        kept = keep[self.flat].astype(np.float64)
+        n_kept = np.bincount(self.owner, weights=kept, minlength=n_points)
+        sums = np.bincount(self.owner, weights=scalars[self.flat] * kept, minlength=n_points)
+        values = np.where(keep[self.nearest], scalars[self.nearest], np.nan)
+        has_kept = n_kept > 0
+        values[has_kept] = sums[has_kept] / n_kept[has_kept]
+        return values

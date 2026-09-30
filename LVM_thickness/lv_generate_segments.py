@@ -671,8 +671,8 @@ def generate_lv_segments(
     if verbose:
         print("Module 4: Segment generation.")
 
-    # We need the angle for the basal RV insertion
-    # This is the most counter-clockwise RV location
+    # We need the angle for the anterior basal RV insertion
+    # This is the RV location with the smallest utils.ring_angle
     # First, retrieve the most basal 5 slices
     loc_rv_z, loc_rv_y, loc_rv_x = np.where(
         sitk.GetArrayViewFromImage(working_contours[label_right_ventricle])
@@ -694,7 +694,7 @@ def generate_lv_segments(
         lv_com_basal_y = lv_com[1]
 
         # Compute the angle
-        theta_rv = np.arctan2(lv_com_basal_y - loc_rv_basal_y, loc_rv_basal_x - lv_com_basal_x)
+        theta_rv = utils.ring_angle(loc_rv_basal_y, loc_rv_basal_x, lv_com_basal_y, lv_com_basal_x)
         theta_rv[theta_rv < 0] += 2 * np.pi
         theta_rv_insertion.append(theta_rv.min())
 
@@ -738,7 +738,7 @@ def generate_lv_segments(
         loc_y, loc_x = np.where(arr_lv_myo_slice)
 
         # Compute the angle(s)
-        theta = -np.arctan2(loc_y - y_0, loc_x - x_0) - theta_0_apical
+        theta = utils.ring_angle(loc_y, loc_x, y_0, x_0) - theta_0_apical
         # Convert to [0,2*np.pi]
         theta[theta < 0] += 2 * np.pi
 
@@ -794,7 +794,7 @@ def generate_lv_segments(
         # y_0, x_0 = get_com(label_lv_myo_slice)
 
         # Compute the angle(s)
-        theta = -np.arctan2(loc_y - y_0, loc_x - x_0) - theta_0
+        theta = utils.ring_angle(loc_y, loc_x, y_0, x_0) - theta_0
         # Convert to [0,2*np.pi]
         theta[theta < 0] += 2 * np.pi
 
@@ -856,7 +856,7 @@ def generate_lv_segments(
         # y_0, x_0 = get_com(label_lv_myo_slice)
 
         # Compute the angle(s)
-        theta = -np.arctan2(loc_y - y_0, loc_x - x_0) - theta_0
+        theta = utils.ring_angle(loc_y, loc_x, y_0, x_0) - theta_0
         # Convert to [0,2*np.pi]
         theta[theta < 0] += 2 * np.pi
 

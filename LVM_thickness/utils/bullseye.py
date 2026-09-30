@@ -17,7 +17,8 @@ from utils import utils
 LVM_ID = 1
 LV_ID = 3
 
-def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, lvm=True):
+def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, lvm=True,
+                                   aorta_exclusion_mm=utils.AORTA_EXCLUSION_MM):
     label_total = sitk.ReadImage(total_path)
     label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID) if lvm else label_total == LV_ID
 
@@ -26,33 +27,20 @@ def get_scalar_ring_mm_coordinates(path, total_path, mesh_name, exists_ok=True, 
     im_ring = im_ring.astype(np.uint8)
 
     mesh = utils.read_vtk_mesh(mesh_name)
-    radius = 0.5 # mm
 
-    # Mean mesh scalar within `radius` of each ring voxel, else the nearest vertex's
+    # Mean mesh scalar within RING_RADIUS_MM of each ring voxel, else the nearest vertex's, ignoring vertices close
+    # to the aorta; ring voxels left without a value stay 0 (no data)
     ring_nnz = im_ring.nonzero()
     ring_idx = np.stack(ring_nnz, axis=1)
     ring_points = utils.continuous_index_to_physical(label_total, ring_idx)
 
     mesh_points = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
     mesh_scalars = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
-    tree = cKDTree(mesh_points)
-
-    values = np.empty(len(ring_idx), dtype=np.float64)
-    neighbours = tree.query_ball_point(ring_points, r=radius, workers=utils.num_threads())
-    counts = np.fromiter((len(n) for n in neighbours), dtype=np.int64, count=len(neighbours))
-
-    has_nb = counts > 0
-    if has_nb.any():
-        flat = np.concatenate([n for n in neighbours if n]).astype(np.int64)
-        owner = np.repeat(np.flatnonzero(has_nb), counts[has_nb])
-        sums = np.bincount(owner, weights=mesh_scalars[flat], minlength=len(ring_idx))
-        values[has_nb] = sums[has_nb] / counts[has_nb]
-    if (~has_nb).any():
-        _, nearest = tree.query(ring_points[~has_nb], workers=utils.num_threads())
-        values[~has_nb] = mesh_scalars[nearest]
+    keep = utils.aorta_keep_mask(label_total, mesh_points, aorta_exclusion_mm)
+    values = utils.MeshNeighbourhood.build(ring_points, mesh_points).values(mesh_scalars, keep)
 
     scalar_ring = np.zeros_like(im_ring, dtype=np.float64)
-    scalar_ring[ring_nnz] = values + 1e-10 # to avoid 0 values
+    scalar_ring[ring_nnz] = np.where(np.isnan(values), 0, values + 1e-10) # to avoid 0 values
 
     scalar_image = sitk.GetImageFromArray(scalar_ring.transpose(2, 1, 0))
     scalar_image.CopyInformation(label_total)
@@ -186,7 +174,7 @@ def generate_polar_values(path,
         label_slice = scalar_np[:,:,n]
         loc_x, loc_y = np.where(label_slice)
 
-        theta = -np.arctan2(loc_y - y_0, loc_x - x_0) - angle_offset
+        theta = utils.ring_angle(loc_y, loc_x, y_0, x_0) - angle_offset
 
         if (label_lv17[:,:,n]==-1).any():
             break

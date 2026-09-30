@@ -124,6 +124,7 @@ def process_patient(
         FileNotFoundError: If the image or segmentation is missing.
     """
     # Imported here so the dataset runner can discover patients without loading VTK/ITK.
+    import SimpleITK as sitk
     from create_medial_sheet import create_medial_sheet
     from lv_generate_segments import wrap_lv_segments
     from thickness_estimation import (
@@ -133,6 +134,7 @@ def process_patient(
         thickness_in_17_seg,
     )
     from utils import bullseye, utils
+    from vtk.util.numpy_support import vtk_to_numpy
 
     for required in (paths.image, paths.segmentation):
         if not os.path.isfile(required):
@@ -167,7 +169,9 @@ def process_patient(
 
     with step("4_thickness", "Calculating thickness per segment"):
         mesh_17 = utils.read_vtk_mesh(os.path.join(save_dir, "surfaces", "myocardium_17.vtk"))
-        thickness = thickness_in_17_seg(mesh_thick, mesh_17)
+        vertices = vtk_to_numpy(mesh_thick.GetPoints().GetData())
+        keep = utils.aorta_keep_mask(sitk.ReadImage(paths.segmentation), vertices)
+        thickness = thickness_in_17_seg(mesh_thick, mesh_17, keep=keep)
         with open(os.path.join(save_dir, "thickness.json"), "w") as f:
             json.dump(dict(thickness), f)
 

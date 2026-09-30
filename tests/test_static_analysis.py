@@ -8,7 +8,7 @@ import SimpleITK as sitk
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LVM_thickness" / "analysis"))
 
-from static_analysis import (  # noqa: E402
+from statistics_analysis import (  # noqa: E402
     MYOCARDIAL_DENSITY_G_PER_ML,
     bsa_dubois,
     calculate_patient_summary,
