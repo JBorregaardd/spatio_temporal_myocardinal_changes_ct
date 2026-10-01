@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import SimpleITK as sitk
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LVM_thickness" / "analysis"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "initial_data_investigation"))
 
 from statistics_analysis import (  # noqa: E402
     MYOCARDIAL_DENSITY_G_PER_ML,

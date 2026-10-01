@@ -19,4 +19,16 @@ def myocardium_volume(segmentation_path: str) -> dict[str, float]:
     segmentation = sitk.ReadImage(segmentation_path)
     voxels = int(np.count_nonzero(sitk.GetArrayViewFromImage(segmentation) == LVM_ID))
     volume_ml = voxels * float(np.prod(segmentation.GetSpacing())) / 1000
-    return {"lvm_volume_ml": volume_ml, "lvm_mass_g": volume_ml * MYOCARDIAL_DENSITY_G_PER_ML}
+    return {"lvm_volume_ml": volume_ml, "lvm_mass_g": volume_ml * 1.055 } #1.055 g/ml is the myocardial density
+
+def segment_volume(lv17_path: str) -> dict[str, float]:
+    lv17 = sitk.ReadImage(lv17_path)
+    labels = sitk.GetArrayViewFromImage(lv17)
+    voxel_ml = float(np.prod(lv17.GetSpacing())) / 1000
+    result = {}
+    for segment in range(1, 18):
+        volume_ml = np.count_nonzero(labels == segment) * voxel_ml
+        result[f"segment_{segment}_volume_ml"] = volume_ml
+        result[f"segment_{segment}_mass_g"] = volume_ml * 1.055 #1.055 g/ml is the myocardial density
+    return result
+

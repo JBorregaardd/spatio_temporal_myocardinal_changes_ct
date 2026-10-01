@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from skimage import morphology
 from vtk.util.numpy_support import vtk_to_numpy
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
 
 from utils import utils  # noqa: E402
 
@@ -311,7 +311,7 @@ def find_finished_patients(output_dir: str) -> list[str]:
 
 def main() -> None:
     """Parse arguments, run the sweep for the selected patients, and write the CSVs and figure."""
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(project_root, ".env"))
     root = os.environ["PROJECT_ROOT"]
     output_dir = os.path.join(root, "output")

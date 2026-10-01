@@ -1,7 +1,7 @@
 #################################################################################################################################################
 # This script takes as input the statistics_thickness_per_segment.csv and identifies outliers based on the median thickness values for each segment across all patients.
 # It reads <output>/<dataset>_<aorta-exclusion-mm>/statistics/ (written by statistics_analysis.py) and saves the outliers to its outliers/ subfolder.
-# e.g. uv run LVM_thickness/analysis/outlier_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5
+# e.g. uv run initial_data_investigation/outlier_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5
 #################################################################################################################################################
 
 import os
@@ -11,7 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
 
 from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
 
@@ -107,7 +107,7 @@ def main():
     args = parse_args()
 
     # Find project root
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(project_root, ".env"))
     root = os.environ["PROJECT_ROOT"]
 

@@ -1,10 +1,10 @@
 #################################################################################################################################################
-# This script takes as input the output folder from the LVM thickness pipeline and calculates the median thickness for each of the 17 segments.
-# Thickness measured within utils.AORTA_EXCLUSION_MM of the aorta (the LV outflow tract, not a wall) is left out.
+# This script takes as input the output folder from the LVM thickness pipeline and calculates the median thickness for each of the 17 segments,
+# from each patient's thickness.json (measurements near the aorta were already left out by the pipeline run).
 # It also calculates myocardial volume and mass per segment, and patient-level measures (LV mass, LV diastolic volume, LV M/V ratio,
 # LA volume, maximal wall thickness), indexed to body surface area when a demographics table is given.
 # It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in that folder.
-# e.g. uv run LVM_thickness/analysis/statistics_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5 --all
+# e.g. uv run initial_data_investigation/statistics_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5 --all
 #################################################################################################################################################
 
 import os
@@ -17,15 +17,14 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 
 import SimpleITK as sitk
-import vtk
-from vtk.util.numpy_support import vtk_to_numpy
-from skimage import morphology
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 
 from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
-from utils import utils  # noqa: E402
+from thickness import thickness_per_segment  # noqa: E402
 
 
 LVM_ID = 1
@@ -59,123 +58,25 @@ PATIENT_FIELDS = [
     "lavi",
 ]
 
-def read_vtk_mesh(path):
-    reader = vtk.vtkPolyDataReader()
-    reader.SetFileName(path)
-    reader.Update()
-    output = reader.GetOutput()
-    assert isinstance(output, vtk.vtkPolyData), f"Output is not a vtkPolyData object: {path}"
-    assert output.GetNumberOfPoints() > 0, f"No points found in mesh: {path}"
-    return output
-
-
-def get_scalar_ring_mm_coordinates(total_path, mesh_name, aorta_exclusion_mm=utils.AORTA_EXCLUSION_MM):
-    """Thickness on the outer LV+myocardium ring voxels, as an image on the segmentation's grid.
-
-    Each ring voxel takes the mean thickness of the mesh vertices within ``utils.RING_RADIUS_MM``, else its nearest
-    vertex's. Vertices within ``aorta_exclusion_mm`` of the aorta are ignored (see ``utils.aorta_distance_at_points``);
-    ring voxels left without a value are 0 and dropped from the statistics.
+def calculate_statistics_thickness_per_segment(folder: str) -> list[dict]:
+    """Median, mean and standard deviation of the wall thickness per AHA segment, from the pipeline's thickness.json.
 
     Args:
-        total_path: TotalSegmentator heart-chambers segmentation path.
-        mesh_name: Thickness mesh path (``dist_source.vtk``).
-        aorta_exclusion_mm: Aortic exclusion distance in mm; 0 disables it.
+        folder: The patient's output folder.
 
     Returns:
-        Thickness image, 0 outside the ring and at excluded voxels.
+        One row per segment 1-17; NaN for segments without measurements.
     """
-    label_total = sitk.ReadImage(total_path)
-    label_lv = sitk.Or(label_total == LV_ID, label_total == LVM_ID)
-
-    im_bin = sitk.GetArrayFromImage(label_lv).transpose(2, 1, 0)
-    im_ring = im_bin & ~morphology.erosion(im_bin)
-    im_ring = im_ring.astype(np.uint8)
-
-    mesh = read_vtk_mesh(mesh_name)
-    mesh_points = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
-    mesh_scalars = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
-
-    ring_nnz = im_ring.nonzero()
-    ring_points = utils.continuous_index_to_physical(label_total, np.stack(ring_nnz, axis=1))
-    keep = utils.aorta_keep_mask(label_total, mesh_points, aorta_exclusion_mm)
-    values = utils.MeshNeighbourhood.build(ring_points, mesh_points).values(mesh_scalars, keep)
-
-    scalar_ring = np.zeros_like(im_ring, dtype=np.float64)
-    scalar_ring[ring_nnz] = np.where(np.isnan(values), 0, values + 1e-10) # to avoid 0 values
-
-    scalar_image = sitk.GetImageFromArray(scalar_ring.transpose(2, 1, 0))
-    scalar_image.CopyInformation(label_total)
-    return scalar_image
-
-
-def calculate_statistics_thickness_per_segment(folder, mesh_name, total_path, aorta_exclusion_mm=AORTA_EXCLUSION_MM):
-
-    # Get thickness values on the myocardium ring
-    scalar_image = get_scalar_ring_mm_coordinates(total_path, mesh_name, aorta_exclusion_mm)
-
-    # Read the transform
-    transform_path = os.path.join(folder, "lv17_transform.txt")
-    transform = sitk.ReadTransform(transform_path)
-
-    # Read the 17-segment segmentation
-    lv17_path = os.path.join(
-        folder,
-        "segmentations",
-        "lv17",
-        "lv17.nii.gz"
-    )
-
-    lv17_segmentation = sitk.ReadImage(lv17_path)
-
-    # Transform the 17-segment segmentation
-    lv17_transformed = sitk.Resample(
-        lv17_segmentation,
-        transform,
-        sitk.sitkNearestNeighbor,
-        0,
-        lv17_segmentation.GetPixelID()
-    )
-
-    # Transform the thickness image
-    scalar_seg = sitk.Resample(
-        scalar_image,
-        transform,
-        sitk.sitkNearestNeighbor,
-        0,
-        scalar_image.GetPixelID()
-    )
-
-    # Convert to numpy
-    segments = sitk.GetArrayFromImage(lv17_transformed).transpose(2, 1, 0)
-    thickness = sitk.GetArrayFromImage(scalar_seg).transpose(2, 1, 0)
-
-    # Calculate median, mean and std thickness for each segment
-    results = []
-
-    for segment in range(1, 18):
-
-        values = thickness[segments == segment]
-
-        # Remove zero values
-        values = values[values > 0]
-
-        if len(values) > 0:
-            median_thickness = np.median(values)
-            mean_thickness = np.mean(values)
-            std_thickness = np.std(values)
-        else:
-            median_thickness = np.nan
-            mean_thickness = np.nan
-            std_thickness = np.nan
-
-        results.append({
+    stats = thickness_per_segment(folder)
+    return [
+        {
             "segment": segment,
-            "median_thickness": median_thickness,
-            "mean_thickness": mean_thickness,
-            "std_thickness": std_thickness
-        })
-
-    return results
+            "median_thickness": stats[f"segment_{segment}_median_mm"],
+            "mean_thickness": stats[f"segment_{segment}_mean_mm"],
+            "std_thickness": stats[f"segment_{segment}_std_mm"],
+        }
+        for segment in SEGMENTS
+    ]
 
 
 def label_volume_ml(image: sitk.Image, mask: np.ndarray) -> float:
@@ -323,7 +224,6 @@ def analyse_patient(
     output_dir: str,
     segmentation_folder: str,
     demographics: dict[str, str] | None = None,
-    aorta_exclusion_mm: float = AORTA_EXCLUSION_MM,
 ) -> tuple[list[dict], dict]:
     """Run the full analysis for one patient and write that patient's CSVs into its output folder.
 
@@ -332,17 +232,15 @@ def analyse_patient(
         output_dir: The pipeline's run folder, containing ``<patient_id>/``.
         segmentation_folder: Folder containing ``<patient_id>.heart.nii.gz``.
         demographics: This patient's demographics row, if available.
-        aorta_exclusion_mm: Aortic exclusion distance in mm; should match the run folder's.
 
     Returns:
         Tuple of (per-segment rows, patient summary row).
     """
     folder = os.path.join(output_dir, patient_id)
-    mesh_name = os.path.join(folder, "surfaces", "dist_source.vtk")
     total_path = os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz")
     lv17_path = os.path.join(folder, "segmentations", "lv17", "lv17.nii.gz")
 
-    table = calculate_statistics_thickness_per_segment(folder, mesh_name, total_path, aorta_exclusion_mm)
+    table = calculate_statistics_thickness_per_segment(folder)
 
     heart = sitk.ReadImage(total_path)
     lv17 = sitk.ReadImage(lv17_path)
@@ -370,7 +268,7 @@ def _analyse_patient_safely(patient_id: str, *args) -> tuple[str, list[dict] | N
 
 
 if __name__ == "__main__":
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(project_root, ".env"))
 
     root = os.environ["PROJECT_ROOT"]
@@ -441,7 +339,7 @@ if __name__ == "__main__":
     results = {}
     failed = {}
     jobs = [
-        (pid, output_dir, segmentation_folder, demographics.get(pid), args.aorta_exclusion_mm)
+        (pid, output_dir, segmentation_folder, demographics.get(pid))
         for pid in patient_ids
     ]
 

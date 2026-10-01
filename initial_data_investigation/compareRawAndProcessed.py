@@ -3,7 +3,7 @@
 # 6 first segments (basal) for the raw and processed data. The boxplots are saved in the output folder.
 # Raw is the pipeline run without aortic exclusion (<dataset>_0mm), processed the run with it (<dataset>_2.5mm); both need
 # statistics/statistics_thickness_per_segment.csv from statistics_analysis.py. Only patients present in both runs are compared.
-# e.g. uv run LVM_thickness/analysis/compareRawAndProcessed.py --dataset ImageCAS_1-200
+# e.g. uv run initial_data_investigation/compareRawAndProcessed.py --dataset ImageCAS_1-200
 #################################################################################################################################################
 
 import os
@@ -13,7 +13,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
 
 from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
 
@@ -93,7 +93,7 @@ def main():
     args = parse_args()
 
     # Find project root
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(project_root, ".env"))
     root = os.environ["PROJECT_ROOT"]
 
