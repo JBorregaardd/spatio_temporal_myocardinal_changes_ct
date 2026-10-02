@@ -4,9 +4,10 @@
 # The CSV and plot are saved in <output>/sphericity.
 # e.g. uv run initial_data_investigation/spherical_scatter.py
 #################################################################################################################################################
-# test prut
+
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
@@ -18,10 +19,31 @@ from sphericity_index import sphericity_index  # noqa: E402
 from volume import myocardium_volume  # noqa: E402
 
 SPHERICITY = "si_vol" # si_vol or si_dl_mid # Choose which sphericity index to plot against volume
+WORKERS = max(1, (os.cpu_count() or 2) - 1)
 SPHERICITY_LABELS = {
     "si_vol": "Volumetric sphericity index",
     "si_dl_mid": "Sphericity index D_mid / L",
 }
+
+
+def measure_patient(segmentation_path: str) -> dict | None:
+    """Sphericity of the LV cavity and volume of the whole LV myocardium of one patient.
+
+    Args:
+        segmentation_path: TotalSegmentator heart-chambers segmentation ``<patient_id>.heart.nii.gz``.
+
+    Returns:
+        One row with ``patient_id`` and the outputs of ``sphericity_index`` and ``myocardium_volume``,
+        or ``None`` if the patient could not be measured.
+    """
+    patient_id = os.path.basename(segmentation_path).removesuffix(".heart.nii.gz")
+    try:
+        row = {"patient_id": patient_id, **sphericity_index(segmentation_path), **myocardium_volume(segmentation_path)}
+        print(f"Patient {patient_id} done")
+        return row
+    except Exception as error:
+        print(f"Patient {patient_id} failed: {error}")
+        return None
 
 
 def plot_volume_vs_sphericity(data: pd.DataFrame, sphericity: str, output_path: str) -> None:
@@ -55,18 +77,9 @@ if __name__ == "__main__":
         key=lambda pid: int(pid) if pid.isdigit() else float("inf"),
     )
 
-    rows = []
-    for patient_id in patient_ids:
-        segmentation_path = os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz")
-        try:
-            rows.append({
-                "patient_id": patient_id,
-                **sphericity_index(segmentation_path),
-                **myocardium_volume(segmentation_path),
-            })
-            print(f"Patient {patient_id} done")
-        except Exception as error:
-            print(f"Patient {patient_id} failed: {error}")
+    segmentation_paths = [os.path.join(segmentation_folder, f"{pid}.heart.nii.gz") for pid in patient_ids]
+    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+        rows = [row for row in executor.map(measure_patient, segmentation_paths) if row is not None]
 
     data = pd.DataFrame(rows)
     output_folder = os.path.join(root, "output", "sphericity")
