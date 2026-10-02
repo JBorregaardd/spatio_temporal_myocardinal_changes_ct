@@ -5,7 +5,7 @@ import SimpleITK as sitk
 LVM_ID = 1
 MYOCARDIAL_DENSITY_G_PER_ML = 1.055
 
-
+" til Signe"
 def myocardium_volume(segmentation_path: str) -> dict[str, float]:
     """Volume and mass of the whole LV myocardium (TotalSegmentator label 1) of one patient.
 
