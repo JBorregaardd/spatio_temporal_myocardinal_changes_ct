@@ -23,7 +23,7 @@ def _grid(extent_mm: float) -> np.ndarray:
 def test_sphere_is_one() -> None:
     points = _grid(RADIUS_MM + 1)
     sphere = points[np.linalg.norm(points, axis=1) <= RADIUS_MM]
-    result = _sphericity(sphere, np.array([0.0, 0.0, RADIUS_MM]), VOXEL_MM**3)
+    result = _sphericity(sphere, np.array([0.0, 0.0, RADIUS_MM]), VOXEL_MM**3, 1.0)
     assert result["si_dl"] == pytest.approx(1, abs=0.03)
     assert result["si_vol"] == pytest.approx(1, abs=0.03)
 
@@ -31,7 +31,7 @@ def test_sphere_is_one() -> None:
 def test_half_ellipsoid_has_ellipsoid_ratio_one() -> None:
     points = _grid(LENGTH_MM + 1)
     inside = np.hypot(points[:, 0], points[:, 1]) ** 2 / RADIUS_MM**2 + points[:, 2] ** 2 / LENGTH_MM**2 <= 1
-    result = _sphericity(points[inside & (points[:, 2] <= 0)], np.zeros(3), VOXEL_MM**3)
+    result = _sphericity(points[inside & (points[:, 2] <= 0)], np.zeros(3), VOXEL_MM**3, 1.0)
     assert result["long_axis_mm"] == pytest.approx(LENGTH_MM, abs=VOXEL_MM)
     assert result["si_dl"] == pytest.approx(2 * RADIUS_MM / LENGTH_MM, rel=0.03)
     assert result["ellipsoid_ratio"] == pytest.approx(1, abs=0.05)
@@ -40,7 +40,7 @@ def test_half_ellipsoid_has_ellipsoid_ratio_one() -> None:
 def test_cylinder_has_blunt_ellipsoid_ratio() -> None:
     points = _grid(LENGTH_MM + 1)
     inside = (np.hypot(points[:, 0], points[:, 1]) <= RADIUS_MM) & (points[:, 2] <= 0) & (points[:, 2] >= -LENGTH_MM)
-    result = _sphericity(points[inside], np.zeros(3), VOXEL_MM**3)
+    result = _sphericity(points[inside], np.zeros(3), VOXEL_MM**3, 1.0)
     assert result["ellipsoid_ratio"] == pytest.approx(1.5, rel=0.05)
 
 
