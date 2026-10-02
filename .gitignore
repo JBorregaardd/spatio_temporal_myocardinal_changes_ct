@@ -3,6 +3,7 @@ docs/site/
 
 /data/
 /output/
+/df/
 
 # test cache
 manual_test/
