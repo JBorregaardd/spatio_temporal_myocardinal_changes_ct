@@ -23,6 +23,7 @@ dependencies = [
     "platipy>=0.4.1",
     "python-dotenv>=1.2.3",
     "scikit-image>=0.26.0",
+    "scikit-learn>=1.9.1",
     "scipy>=1.18.1",
     "simpleitk>=2.5.6",
     "torch==2.6.0",
