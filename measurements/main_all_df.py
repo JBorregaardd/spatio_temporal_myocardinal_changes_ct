@@ -1,6 +1,7 @@
 #################################################################################################################################################
 # This script measures the LV myocardium for all patients in the dataset and makes a 4x1 table with the medians:
 # median Volume (mL), median Mass (g), median volumetric Sphericity Index and median Sphericity Index D_mid / L.
+# If META_DATA_FILE is set in .env, the median BSA (m^2) from the metadata file is added as a fifth row.
 # The median table is saved in <df>/df_myocardium_median.csv.
 # e.g. uv run measurements/main_all_df.py
 #################################################################################################################################################
@@ -14,6 +15,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
+from BSA import body_surface_area  # noqa: E402
 from pipeline import discover_patients, load_environment  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from volume import myocardium_volume  # noqa: E402
@@ -25,6 +27,7 @@ ROW_LABELS = {
     "lvm_mass_g": "Median mass (g)",
     "si_vol": "Median volumetric sphericity index",
     "si_dl_mid": "Median sphericity index D_mid / L",
+    "BSA": "Median BSA (m^2)",
 }
 
 
@@ -57,15 +60,15 @@ def measure_patient(patient_id: str, segmentation_path: str) -> dict | None:
 
 
 def median_table(data: pd.DataFrame) -> pd.DataFrame:
-    """Make a 4x1 table with the median of volume, mass and the two sphericity indices over all patients.
+    """Make a table with the median of volume, mass, the two sphericity indices and, if present, BSA over all patients.
 
     Args:
-        data: One row per patient with the columns in ``ROW_LABELS``.
+        data: One row per patient with the columns in ``ROW_LABELS``; ``BSA`` is optional.
 
     Returns:
         A table with one row per measurement and a single ``Median`` column.
     """
-    medians = data[list(ROW_LABELS)].median()
+    medians = data[[column for column in ROW_LABELS if column in data]].median()
     return medians.rename(index=ROW_LABELS).to_frame(name="Median")
 
 
@@ -77,6 +80,11 @@ if __name__ == "__main__":
         rows = [row for row in executor.map(measure_patient, patient_ids, segmentation_paths) if row is not None]
 
     data = pd.DataFrame(rows)
+    metadata_file = os.environ.get("META_DATA_FILE")
+    if metadata_file:
+        bsa = body_surface_area(pd.read_csv(metadata_file))[["patient_id", "BSA"]]
+        data = data.merge(bsa, on="patient_id", how="left")
+        print(f"BSA found for {data['BSA'].notna().sum()} of {len(data)} patients")
     output_folder = os.path.join(root, "df")
     os.makedirs(output_folder, exist_ok=True)
 
