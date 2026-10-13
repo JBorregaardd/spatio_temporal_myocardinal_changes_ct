@@ -24,8 +24,15 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from tqdm import tqdm
 
-from main_single import load_environment
-from pipeline import AORTA_EXCLUSION_MM, PatientPaths, discover_patients, patient_paths, run_output_dir
+from pipeline import (
+    AORTA_EXCLUSION_MM,
+    DataSource,
+    PatientPaths,
+    discover_patients,
+    load_environment,
+    patient_paths,
+    run_output_dir,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKER_SCRIPT = os.path.join(HERE, "main_single.py")
@@ -67,9 +74,9 @@ def default_workers(memory_per_worker_gb: float) -> int:
     return max(1, min(cores, by_memory))
 
 
-def select_patients(args: argparse.Namespace, root: str, folder: str) -> list[str]:
+def select_patients(args: argparse.Namespace, data: DataSource) -> list[str]:
     """Apply --patients, --shard and --limit to the discovered patient list."""
-    discovered = discover_patients(root, folder)
+    discovered = discover_patients(data)
     if args.patients:
         missing = sorted(set(args.patients) - set(discovered))
         if missing:
@@ -227,12 +234,12 @@ def main() -> int:
         Process exit code: 0 if every attempted patient succeeded, else 1.
     """
     args = parse_args()
-    root, folder = load_environment()
+    root, data = load_environment()
     parent_dir = os.path.abspath(args.output_dir or os.path.join(root, "output"))
     output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, parent_dir)
 
-    selected = select_patients(args, root, folder)
-    all_paths = [patient_paths(root, folder, pid, output_dir) for pid in selected]
+    selected = select_patients(args, data)
+    all_paths = [patient_paths(root, data, pid, output_dir) for pid in selected]
     todo = [p for p in all_paths if args.overwrite or not p.is_done()]
     skipped = len(all_paths) - len(todo)
 

@@ -2,15 +2,18 @@
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterator
 
 SCAN_TYPE = "ED"
-IMAGE_SUBDIR = os.path.join("data", "1_200")
+DEFAULT_IMAGE_PATTERN = "{id}.img.nii.gz"
+DEFAULT_SEGMENTATION_PATTERN = "{id}.heart.nii.gz"
 DONE_MARKER = "done.json"
 AORTA_EXCLUSION_MM = 2.5
 
@@ -41,12 +44,98 @@ class PatientPaths:
         return os.path.isfile(self.done_marker)
 
 
-def patient_paths(root: str, segmentation_folder: str, patient_id: str, output_dir: str | None = None) -> PatientPaths:
+@dataclass(frozen=True)
+class DataSource:
+    """Where the CT images and segmentations of a dataset live and how their files are named.
+
+    Patterns are paths relative to their folder in which ``{id}`` marks the patient id and ``*`` matches any
+    characters except ``/``, e.g. ``"CGPS-10y-august-2026_{id}_*/segmentations/heartchambers_highres.nii.gz"``.
+
+    Attributes:
+        image_folder: Folder containing the CT images.
+        segmentation_folder: Folder containing the TotalSegmentator heart-chambers segmentations.
+        image_pattern: Image path pattern relative to ``image_folder``.
+        segmentation_pattern: Segmentation path pattern relative to ``segmentation_folder``.
+    """
+
+    image_folder: str
+    segmentation_folder: str
+    image_pattern: str = DEFAULT_IMAGE_PATTERN
+    segmentation_pattern: str = DEFAULT_SEGMENTATION_PATTERN
+
+    def image_path(self, patient_id: str) -> str:
+        """The patient's CT image path (the unresolved pattern if no file matches)."""
+        return _resolve(self.image_folder, self.image_pattern, patient_id)
+
+    def segmentation_path(self, patient_id: str) -> str:
+        """The patient's segmentation path (the unresolved pattern if no file matches)."""
+        return _resolve(self.segmentation_folder, self.segmentation_pattern, patient_id)
+
+
+def _resolve(folder: str, pattern: str, patient_id: str) -> str:
+    """Path of the single file matching ``pattern`` for ``patient_id``.
+
+    Raises:
+        ValueError: If more than one file matches.
+    """
+    path = os.path.join(folder, pattern.replace("{id}", glob.escape(patient_id)))
+    matches = sorted(glob.glob(path))
+    if len(matches) > 1:
+        raise ValueError(f"Patient {patient_id} matches {len(matches)} files for {path}: {matches}")
+    return matches[0] if matches else path
+
+
+def _ids_matching(folder: str, pattern: str) -> dict[str, list[str]]:
+    """Map every patient id found in ``folder`` to the files matching ``pattern`` for it."""
+    regex = re.compile(
+        "".join(
+            "(?P<id>[^/]+?)" if part == "{id}" else "[^/]*" if part == "*" else re.escape(part)
+            for part in re.split(r"(\{id\}|\*)", pattern)
+        )
+    )
+    found: dict[str, list[str]] = {}
+    for path in glob.glob(os.path.join(folder, pattern.replace("{id}", "*"))):
+        match = regex.fullmatch(os.path.relpath(path, folder).replace(os.sep, "/"))
+        if match:
+            found.setdefault(match["id"], []).append(path)
+    return found
+
+
+def load_environment() -> tuple[str, DataSource]:
+    """Load the project root and data locations from the repo-root .env or the environment.
+
+    ``PROJECT_ROOT`` is required. ``IMAGE_FOLDER`` and ``SEGMENTATION_FOLDER`` default to ``<PROJECT_ROOT>/data/1_200``
+    and ``<PROJECT_ROOT>/data/TotalSegmentator``; ``IMAGE_PATTERN`` and ``SEGMENTATION_PATTERN`` default to the local
+    ``<id>.img.nii.gz`` / ``<id>.heart.nii.gz`` naming.
+
+    Returns:
+        Tuple of (project root, data source).
+    """
+    from dotenv import load_dotenv
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    load_dotenv(os.path.join(repo_root, ".env"))
+    root = os.environ.get("PROJECT_ROOT")
+    if not root:
+        raise SystemExit(
+            "\n[ERROR] Missing required environment variable 'PROJECT_ROOT'.\n"
+            "Set it in a .env file at the repo root (see .env.example), or export it in your shell/job script."
+        )
+    data = DataSource(
+        image_folder=os.environ.get("IMAGE_FOLDER", os.path.join(root, "data", "1_200")),
+        segmentation_folder=os.environ.get("SEGMENTATION_FOLDER", os.path.join(root, "data", "TotalSegmentator")),
+        image_pattern=os.environ.get("IMAGE_PATTERN", DEFAULT_IMAGE_PATTERN),
+        segmentation_pattern=os.environ.get("SEGMENTATION_PATTERN", DEFAULT_SEGMENTATION_PATTERN),
+    )
+    return root, data
+
+
+def patient_paths(root: str, data: DataSource, patient_id: str, output_dir: str | None = None) -> PatientPaths:
     """Build the input/output paths for a patient.
 
     Args:
-        root: Project root containing ``data/1_200``.
-        segmentation_folder: Folder containing ``<id>.heart.nii.gz`` files.
+        root: Project root.
+        data: Location and naming of the images and segmentations.
         patient_id: Dataset id.
         output_dir: Parent of the per-patient output folders; defaults to ``<root>/output``.
 
@@ -56,8 +145,8 @@ def patient_paths(root: str, segmentation_folder: str, patient_id: str, output_d
     output_dir = output_dir or os.path.join(root, "output")
     return PatientPaths(
         patient_id=patient_id,
-        image=os.path.join(root, IMAGE_SUBDIR, f"{patient_id}.img.nii.gz"),
-        segmentation=os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz"),
+        image=data.image_path(patient_id),
+        segmentation=data.segmentation_path(patient_id),
         save_dir=os.path.join(output_dir, patient_id),
     )
 
@@ -78,23 +167,25 @@ def run_output_dir(root: str, dataset: str, aorta_exclusion_mm: float, output_di
     return os.path.abspath(os.path.join(parent, f"{dataset}_{aorta_exclusion_mm:g}mm")) # end with mm e.g. "2.5mm"
 
 
-def discover_patients(root: str, segmentation_folder: str) -> list[str]:
-    """List patient ids that have both a CT image and a heart segmentation.
+def discover_patients(data: DataSource, require_image: bool = True) -> list[str]:
+    """List patient ids that have exactly one heart segmentation and, by default, exactly one CT image.
+
+    Ids matching several files for the image or segmentation pattern are skipped with a warning.
 
     Args:
-        root: Project root containing ``data/1_200``.
-        segmentation_folder: Folder containing ``<id>.heart.nii.gz`` files.
+        data: Location and naming of the images and segmentations.
+        require_image: Only return ids that also have a CT image.
 
     Returns:
         Patient ids, numeric ids in numeric order.
     """
-    image_ids = _ids_with_suffix(os.path.join(root, IMAGE_SUBDIR), ".img.nii.gz")
-    seg_ids = _ids_with_suffix(segmentation_folder, ".heart.nii.gz")
-    return sorted(image_ids & seg_ids, key=lambda pid: (0, int(pid), "") if pid.isdigit() else (1, 0, pid))
-
-
-def _ids_with_suffix(folder: str, suffix: str) -> set[str]:
-    return {name[: -len(suffix)] for name in os.listdir(folder) if name.endswith(suffix)}
+    segmentations = _ids_matching(data.segmentation_folder, data.segmentation_pattern)
+    images = _ids_matching(data.image_folder, data.image_pattern) if require_image else {}
+    ids = set(segmentations) & set(images) if require_image else set(segmentations)
+    ambiguous = {pid for pid in ids if len(images.get(pid, [])) > 1 or len(segmentations[pid]) > 1}
+    for pid in sorted(ambiguous):
+        print(f"[WARN] Skipping patient {pid}: several matching files {images.get(pid, []) + segmentations[pid]}")
+    return sorted(ids - ambiguous, key=lambda pid: (0, int(pid), "") if pid.isdigit() else (1, 0, pid))
 
 
 def peak_memory_bytes() -> int | None:

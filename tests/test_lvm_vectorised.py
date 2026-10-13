@@ -12,7 +12,7 @@ from vtk.util.numpy_support import numpy_to_vtk
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "LVM_thickness"))
 
 from lv_generate_segments import _label_centers_of_mass  # noqa: E402
-from pipeline import discover_patients  # noqa: E402
+from pipeline import DataSource, discover_patients  # noqa: E402
 from thickness_estimation import _smooth_vectors, thickness_in_17_seg  # noqa: E402
 from utils import utils  # noqa: E402
 
@@ -136,7 +136,34 @@ def test_discover_patients_requires_image_and_segmentation(tmp_path: Path) -> No
         (seg_dir / f"{pid}.heart.nii.gz").touch()
         (seg_dir / f"{pid}.arteries.nii.gz").touch()
 
-    assert discover_patients(str(tmp_path), str(seg_dir)) == ["1", "10", "100"]
+    assert discover_patients(DataSource(str(image_dir), str(seg_dir))) == ["1", "10", "100"]
+
+
+def test_discover_patients_remote_layout(tmp_path: Path) -> None:
+    """Remote CGPS layout: only volume_1 scans count and segmentations sit in per-series subfolders."""
+    image_dir = tmp_path / "NIFTI"
+    seg_dir = tmp_path / "Cardiac_ED_CE"
+    image_dir.mkdir()
+    for pid in ["0000", "0001", "0002"]:
+        for volume in ["1", "2", "10"]:
+            (image_dir / f"CGPS-10y-august-2026_{pid}_SERIES{pid[-1]}4_volume_{volume}.nii.gz").touch()
+    for pid in ["0000", "0002", "0003"]:
+        folder = seg_dir / f"CGPS-10y-august-2026_{pid}_SERIES0013_volume_1" / "segmentations"
+        folder.mkdir(parents=True)
+        (folder / "heartchambers_highres.nii.gz").touch()
+        (folder / "aorta.nii.gz").touch()
+    data = DataSource(
+        str(image_dir),
+        str(seg_dir),
+        image_pattern="CGPS-10y-august-2026_{id}_*_volume_1.nii.gz",
+        segmentation_pattern="CGPS-10y-august-2026_{id}_*/segmentations/heartchambers_highres.nii.gz",
+    )
+
+    assert discover_patients(data) == ["0000", "0002"]
+    assert data.image_path("0002") == str(image_dir / "CGPS-10y-august-2026_0002_SERIES24_volume_1.nii.gz")
+    assert data.segmentation_path("0000") == str(
+        seg_dir / "CGPS-10y-august-2026_0000_SERIES0013_volume_1" / "segmentations" / "heartchambers_highres.nii.gz"
+    )
 
 
 def test_aorta_distance_matches_full_volume_distance_map() -> None:

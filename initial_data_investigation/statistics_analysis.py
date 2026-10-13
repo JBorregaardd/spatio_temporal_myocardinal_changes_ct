@@ -17,13 +17,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 
 import SimpleITK as sitk
-from dotenv import load_dotenv
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 
-from pipeline import AORTA_EXCLUSION_MM, run_output_dir  # noqa: E402
+from pipeline import AORTA_EXCLUSION_MM, DataSource, load_environment, run_output_dir  # noqa: E402
 from thickness import thickness_per_segment  # noqa: E402
 
 
@@ -222,7 +221,7 @@ def write_csv(path: str, fieldnames: list[str], rows: list[dict]) -> None:
 def analyse_patient(
     patient_id: str,
     output_dir: str,
-    segmentation_folder: str,
+    data: DataSource,
     demographics: dict[str, str] | None = None,
 ) -> tuple[list[dict], dict]:
     """Run the full analysis for one patient and write that patient's CSVs into its output folder.
@@ -230,14 +229,14 @@ def analyse_patient(
     Args:
         patient_id: Dataset id.
         output_dir: The pipeline's run folder, containing ``<patient_id>/``.
-        segmentation_folder: Folder containing ``<patient_id>.heart.nii.gz``.
+        data: Location and naming of the segmentations.
         demographics: This patient's demographics row, if available.
 
     Returns:
         Tuple of (per-segment rows, patient summary row).
     """
     folder = os.path.join(output_dir, patient_id)
-    total_path = os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz")
+    total_path = data.segmentation_path(patient_id)
     lv17_path = os.path.join(folder, "segmentations", "lv17", "lv17.nii.gz")
 
     table = calculate_statistics_thickness_per_segment(folder)
@@ -268,11 +267,7 @@ def _analyse_patient_safely(patient_id: str, *args) -> tuple[str, list[dict] | N
 
 
 if __name__ == "__main__":
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    load_dotenv(os.path.join(project_root, ".env"))
-
-    root = os.environ["PROJECT_ROOT"]
-    segmentation_folder = os.environ.get("SEGMENTATION_FOLDER", os.path.join(root, "data", "TotalSegmentator"))
+    root, data = load_environment()
 
     parser = argparse.ArgumentParser(description="Run the LVM thickness analysis for one, several or all patients.")
     parser.add_argument("--dataset", required=True,
@@ -339,7 +334,7 @@ if __name__ == "__main__":
     results = {}
     failed = {}
     jobs = [
-        (pid, output_dir, segmentation_folder, demographics.get(pid))
+        (pid, output_dir, data, demographics.get(pid))
         for pid in patient_ids
     ]
 

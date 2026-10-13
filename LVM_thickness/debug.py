@@ -20,15 +20,15 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 
 import lv_generate_segments as lvseg
+from pipeline import load_environment
 
 # ---- adjust these to match your failing case ----
-root = r"C:\Users\Jacob pc\vscode_projects\spatio_temporal_myocardinal_changes_ct"
-folder = os.path.join(root, "data", "TotalSegmentator")
+root, data = load_environment()
 patient_id = "1"
 current_save_dir = os.path.join(root, "output", patient_id)
 
-segmentation_path = os.path.join(folder, f"{patient_id}.heart.nii.gz")
-image_path = os.path.join(root, "data", "1_200", f"{patient_id}.img.nii.gz")
+segmentation_path = data.segmentation_path(patient_id)
+image_path = data.image_path(patient_id)
 
 out_dir = os.path.join(current_save_dir, "debug_ring")
 os.makedirs(out_dir, exist_ok=True)

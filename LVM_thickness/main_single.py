@@ -7,27 +7,7 @@ import os
 import sys
 import traceback
 
-from dotenv import load_dotenv
-
-from pipeline import AORTA_EXCLUSION_MM, patient_paths, process_patient, run_output_dir
-
-
-def load_environment() -> tuple[str, str]:
-    """Load PROJECT_ROOT and SEGMENTATION_FOLDER from the repo-root .env or the environment.
-
-    Returns:
-        Tuple of (project root, segmentation folder).
-    """
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    load_dotenv(os.path.join(repo_root, ".env"))
-    try:
-        return os.environ["PROJECT_ROOT"], os.environ["SEGMENTATION_FOLDER"]
-    except KeyError as missing:
-        raise SystemExit(
-            f"\n[ERROR] Missing required environment variable {missing}.\n"
-            f"Set PROJECT_ROOT and SEGMENTATION_FOLDER in a .env file at the repo root "
-            f"(see .env.example), or export them directly in your shell/job script."
-        )
+from pipeline import AORTA_EXCLUSION_MM, load_environment, patient_paths, process_patient, run_output_dir
 
 
 def main() -> int:
@@ -54,9 +34,13 @@ def main() -> int:
                              f"(default: {AORTA_EXCLUSION_MM}).")
     args = parser.parse_args()
 
-    root, folder = load_environment()
+    root, data = load_environment()
     output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
-    paths = patient_paths(root, folder, args.patient_id, output_dir)
+    try:
+        paths = patient_paths(root, data, args.patient_id, output_dir)
+    except ValueError as error:
+        print(f"[ERROR] {error}")
+        return 1
 
     print(f"Checking files for patient {paths.patient_id}:")
     print(f"  Image:        {paths.image} -> Exists: {os.path.exists(paths.image)}")

@@ -17,12 +17,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from dotenv import load_dotenv
 from skimage import morphology
 from vtk.util.numpy_support import vtk_to_numpy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
 
+from pipeline import DataSource, load_environment  # noqa: E402
 from utils import utils  # noqa: E402
 
 LVM_ID = 1
@@ -75,7 +75,7 @@ def ring_voxel_segments(
 def analyse_patient(
     patient_id: str,
     output_dir: str,
-    segmentation_folder: str,
+    data: DataSource,
     thresholds: list[float],
 ) -> tuple[list[dict], list[dict]]:
     """Per-segment thickness for every exclusion distance, plus a thickness-vs-aorta-distance profile.
@@ -87,14 +87,14 @@ def analyse_patient(
     Args:
         patient_id: Dataset id.
         output_dir: The pipeline's output folder, containing ``<patient_id>/``.
-        segmentation_folder: Folder containing ``<patient_id>.heart.nii.gz``.
+        data: Location and naming of the segmentations.
         thresholds: Exclusion distances in mm.
 
     Returns:
         Tuple of (per-threshold per-segment rows, per-segment per-distance-bin profile rows).
     """
     folder = os.path.join(output_dir, patient_id)
-    heart = sitk.ReadImage(os.path.join(segmentation_folder, f"{patient_id}.heart.nii.gz"))
+    heart = sitk.ReadImage(data.segmentation_path(patient_id))
     mesh = utils.read_vtk_mesh(os.path.join(folder, "surfaces", "dist_source.vtk"))
 
     labels = sitk.GetArrayViewFromImage(heart).transpose(2, 1, 0)
@@ -311,11 +311,8 @@ def find_finished_patients(output_dir: str) -> list[str]:
 
 def main() -> None:
     """Parse arguments, run the sweep for the selected patients, and write the CSVs and figure."""
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    load_dotenv(os.path.join(project_root, ".env"))
-    root = os.environ["PROJECT_ROOT"]
+    root, data = load_environment()
     output_dir = os.path.join(root, "output")
-    segmentation_folder = os.environ.get("SEGMENTATION_FOLDER", os.path.join(root, "data", "TotalSegmentator"))
 
     parser = argparse.ArgumentParser(description="Sensitivity analysis of the aortic exclusion distance.")
     parser.add_argument(
@@ -365,7 +362,7 @@ def main() -> None:
         print(
             f"Sweeping {len(thresholds)} distances for {len(patient_ids)} patient(s) with {args.workers} worker(s)..."
         )
-        jobs = [(pid, output_dir, segmentation_folder, thresholds) for pid in patient_ids]
+        jobs = [(pid, output_dir, data, thresholds) for pid in patient_ids]
         rows, profiles, failed = [], [], {}
 
         def record(done: int, outcome: tuple) -> None:

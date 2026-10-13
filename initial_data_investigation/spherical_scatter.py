@@ -1,6 +1,6 @@
 #################################################################################################################################################
 # This script computes, per patient, the sphericity index of the left ventricle (LV) cavity and the volume of the whole LV myocardium,
-# and plots them against each other. It only reads the TotalSegmentator heart segmentations (<id>.heart.nii.gz).
+# and plots them against each other. It only reads the TotalSegmentator heart segmentations.
 # The CSV and plot are saved in <output>/sphericity.
 # e.g. uv run initial_data_investigation/spherical_scatter.py
 #################################################################################################################################################
@@ -10,11 +10,12 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 import pandas as pd
 import matplotlib.pyplot as plt
-from dotenv import load_dotenv
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
+from pipeline import discover_patients, load_environment  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from volume import myocardium_volume  # noqa: E402
 
@@ -26,17 +27,17 @@ SPHERICITY_LABELS = {
 }
 
 
-def measure_patient(segmentation_path: str) -> dict | None:
+def measure_patient(patient_id: str, segmentation_path: str) -> dict | None:
     """Sphericity of the LV cavity and volume of the whole LV myocardium of one patient.
 
     Args:
-        segmentation_path: TotalSegmentator heart-chambers segmentation ``<patient_id>.heart.nii.gz``.
+        patient_id: Dataset id.
+        segmentation_path: TotalSegmentator heart-chambers segmentation of the patient.
 
     Returns:
         One row with ``patient_id`` and the outputs of ``sphericity_index`` and ``myocardium_volume``,
         or ``None`` if the patient could not be measured.
     """
-    patient_id = os.path.basename(segmentation_path).removesuffix(".heart.nii.gz")
     try:
         row = {"patient_id": patient_id, **sphericity_index(segmentation_path), **myocardium_volume(segmentation_path)}
         print(f"Patient {patient_id} done")
@@ -68,18 +69,11 @@ def plot_volume_vs_sphericity(data: pd.DataFrame, sphericity: str, output_path: 
 
 
 if __name__ == "__main__":
-    load_dotenv(os.path.join(REPO_ROOT, ".env"))
-    root = os.environ["PROJECT_ROOT"]
-    segmentation_folder = os.environ.get("SEGMENTATION_FOLDER", os.path.join(root, "data", "TotalSegmentator"))
-
-    patient_ids = sorted(
-        (name.removesuffix(".heart.nii.gz") for name in os.listdir(segmentation_folder) if name.endswith(".heart.nii.gz")),
-        key=lambda pid: int(pid) if pid.isdigit() else float("inf"),
-    )
-
-    segmentation_paths = [os.path.join(segmentation_folder, f"{pid}.heart.nii.gz") for pid in patient_ids]
+    root, data = load_environment()
+    patient_ids = discover_patients(data, require_image=False)
+    segmentation_paths = [data.segmentation_path(pid) for pid in patient_ids]
     with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        rows = [row for row in executor.map(measure_patient, segmentation_paths) if row is not None]
+        rows = [row for row in executor.map(measure_patient, patient_ids, segmentation_paths) if row is not None]
 
     data = pd.DataFrame(rows)
     output_folder = os.path.join(root, "output", "sphericity")
