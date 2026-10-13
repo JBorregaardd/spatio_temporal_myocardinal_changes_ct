@@ -19,10 +19,10 @@ from thickness import SEGMENTS, thickness_per_segment
 from volume import segment_volume  
 
 MYOCARDIAL_DENSITY_G_PER_ML = 1.055  # Fuchs et al. 2016
-DATASET = "ImageCAS_1-200"
-AORTA_EXCLUSION_MM = 2.5
+DATASET = "CGPS10"
+AORTA_EXCLUSION_MM = 0
 #WORKERS = max(1, (os.cpu_count() or 2) - 1)
-WORKERS = 8
+WORKERS = 16
 ROW_LABELS = {
     "median_wall_thickness": "Median thickness (mm)",
     "mean_wall_thickness": "Mean thickness (mm)",
