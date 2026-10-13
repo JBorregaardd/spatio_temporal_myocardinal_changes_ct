@@ -4,6 +4,9 @@
 # per-segment thickness exactly like statistics_analysis.py (ring voxels -> lv17 transform -> segment). It writes CSVs and a figure that
 # show how the segment bordering the aorta recovers relative to its neighbours, how many of its voxels are lost, and how much the other
 # segments move, so a sweet spot for the distance can be chosen.
+# It reads the pipeline run folder <output>/<DATASET>_<AORTA_EXCLUSION_MM>mm and saves to <run folder>/statistics/aorta_sensitivity.
+# Any run folder works, since dist_source.vtk is written before the pipeline applies its aortic exclusion.
+# e.g. uv run initial_data_investigation/aorta_sensitivity_analysis.py --dataset CGPS10 --aorta-exclusion-mm 2.5
 #################################################################################################################################################
 
 import argparse
@@ -22,7 +25,7 @@ from vtk.util.numpy_support import vtk_to_numpy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
 
-from pipeline import DataSource, load_environment  # noqa: E402
+from pipeline import AORTA_EXCLUSION_MM, DataSource, load_environment, run_output_dir  # noqa: E402
 from utils import utils  # noqa: E402
 
 LVM_ID = 1
@@ -86,7 +89,7 @@ def analyse_patient(
 
     Args:
         patient_id: Dataset id.
-        output_dir: The pipeline's output folder, containing ``<patient_id>/``.
+        output_dir: The pipeline run folder, containing ``<patient_id>/``.
         data: Location and naming of the segmentations.
         thresholds: Exclusion distances in mm.
 
@@ -311,10 +314,14 @@ def find_finished_patients(output_dir: str) -> list[str]:
 
 def main() -> None:
     """Parse arguments, run the sweep for the selected patients, and write the CSVs and figure."""
-    root, data = load_environment()
-    output_dir = os.path.join(root, "output")
-
     parser = argparse.ArgumentParser(description="Sensitivity analysis of the aortic exclusion distance.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run to analyse; reads <output-dir>/<dataset>_<mm>mm.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the pipeline run, only used to find its folder "
+                             f"(default: {AORTA_EXCLUSION_MM}).")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
     parser.add_argument(
         "--patient-ids", nargs="+", default=None, help="Patients to include (default: every patient with done.json)."
     )
@@ -346,6 +353,12 @@ def main() -> None:
         "--plot-only", action="store_true", help="Skip the sweep and replot from the CSVs written by a previous run."
     )
     args = parser.parse_args()
+
+    root, data = load_environment()
+    output_dir = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
+    if not os.path.isdir(output_dir):
+        raise SystemExit(f"Pipeline run folder not found: {output_dir}")
+    print(f"Reading pipeline run: {output_dir}")
 
     save_dir = os.path.join(output_dir, OUTPUT_SUBFOLDER)
     os.makedirs(save_dir, exist_ok=True)
