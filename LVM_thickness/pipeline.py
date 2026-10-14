@@ -167,6 +167,21 @@ def run_output_dir(root: str, dataset: str, aorta_exclusion_mm: float, output_di
     return os.path.abspath(os.path.join(parent, f"{dataset}_{aorta_exclusion_mm:g}mm")) # end with mm e.g. "2.5mm"
 
 
+def table_output_dir(root: str, dataset: str, aorta_exclusion_mm: float, n_patients: int) -> str:
+    """Folder the result tables of one run are written to: ``<root>/df/<dataset>_<aorta_exclusion_mm>mm_n<n_patients>``.
+
+    Args:
+        root: Project root.
+        dataset: Dataset name.
+        aorta_exclusion_mm: Aortic exclusion distance in mm of the run.
+        n_patients: Number of patients the tables are made from.
+
+    Returns:
+        Absolute path of the table folder.
+    """
+    return os.path.abspath(os.path.join(root, "df", f"{dataset}_{aorta_exclusion_mm:g}mm_n{n_patients}"))
+
+
 def discover_patients(data: DataSource, require_image: bool = True) -> list[str]:
     """List patient ids that have exactly one heart segmentation and, by default, exactly one CT image.
 

@@ -53,6 +53,7 @@ PATIENT_FIELDS = [
     "bsa_m2",
     "lvm_max_thickness_mm",
     "lvm_average_thickness_mm",
+    "lvm_volume_ml",
     "lvm_g",
     "lvdv_ml",
     "Sphericity_index",
@@ -124,13 +125,15 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
         ]
 
         sphericity = sphericity_index(segmentation_path)
+        myocardium = myocardium_volume(segmentation_path)
         patient_row = {
             "patient_id": patient_id,
             "lvm_max_thickness_mm": np.nanmax(
                 [thickness[f"segment_{segment}_median_mm"] for segment in WALL_THICKNESS_SEGMENTS]
             ),
             "lvm_average_thickness_mm": average_thickness(patient_dir),
-            "lvm_g": myocardium_volume(segmentation_path)["lvm_mass_g"],
+            "lvm_volume_ml": myocardium["lvm_volume_ml"],
+            "lvm_g": myocardium["lvm_mass_g"],
             "lvdv_ml": sphericity["edv_ml"],
             "Sphericity_index": sphericity["si_vol"],
         }

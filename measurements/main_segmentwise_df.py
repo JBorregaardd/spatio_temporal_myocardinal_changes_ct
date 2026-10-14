@@ -1,70 +1,39 @@
 #################################################################################################################################################
-# This script measures the LV myocardium per AHA segment for all patients in the dataset and makes one table per segment. Each table has
-# a row for n and for the median thickness, mean thickness, volume (mL) and mass (g) of the patients, given as median ± std over patients,
-# and a column per group of patients. For now there is one group, "All"; the hypertension groups and a BSA metric will be added later.
-# It reads the pipeline run folder <output>/<DATASET>_<AORTA_EXCLUSION_MM>mm and saves the tables in <df>/segments/segment_<n>.csv.
-# e.g. uv run measurements/main_segmentwise_df.py
+# This script makes one table per AHA segment from the per-segment statistics written by main_statistics_df.py. Each table has a row for n
+# and for each measurement given as mean ± sd over the patients, and a column per group of patients. For now there is one group, "All";
+# the hypertension groups will be added later.
+# It reads <run folder>/statistics/statistics_thickness_per_segment.csv and saves the tables in
+# <df>/<dataset>_<aorta-exclusion-mm>mm_n<number of patients>/segments/segment_<n>.csv.
+# Run main_statistics_df.py for the same --dataset and --aorta-exclusion-mm first.
+# e.g. uv run measurements/main_segmentwise_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+import argparse
 import pandas as pd
-from dotenv import load_dotenv
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
-from thickness import SEGMENTS, thickness_per_segment  
-from volume import segment_volume  
+from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir, table_output_dir  # noqa: E402
+from thickness import SEGMENTS  # noqa: E402
 
-MYOCARDIAL_DENSITY_G_PER_ML = 1.055  # Fuchs et al. 2016
-DATASET = "CGPS10"
-AORTA_EXCLUSION_MM = 0
-#WORKERS = max(1, (os.cpu_count() or 2) - 1)
-WORKERS = 16
+SEGMENT_STATISTICS = os.path.join("statistics", "statistics_thickness_per_segment.csv")
 ROW_LABELS = {
-    "median_wall_thickness": "Median thickness (mm)",
-    "mean_wall_thickness": "Mean thickness (mm)",
+    "median_thickness": "Median thickness (mm)",
+    "mean_thickness": "Mean thickness (mm)",
     "volume_ml": "Volume (mL)",
     "mass_g": "Mass (g)",
+    "SLVDVI": "SLVDVI (mL/m^2)",
 }
 
 
-def measure_patient(patient_dir: str) -> list[dict] | None:
-    """Wall thickness, volume and mass of each AHA segment of one patient.
-
-    Args:
-        patient_dir: The patient's output folder from the LVM thickness pipeline.
-
-    Returns:
-        One row per segment with ``patient_id``, ``segment`` and the columns in ``ROW_LABELS``,
-        or ``None`` if the patient could not be measured.
-    """
-    patient_id = os.path.basename(patient_dir)
-    try:
-        thickness = thickness_per_segment(patient_dir)
-        volumes = segment_volume(os.path.join(patient_dir, "segmentations", "lv17", "lv17.nii.gz"))
-        rows = []
-        for segment in SEGMENTS:
-            volume_ml = volumes[f"segment_{segment}_volume_ml"]
-            rows.append({
-                "patient_id": patient_id,
-                "segment": segment,
-                "median_wall_thickness": thickness[f"segment_{segment}_median_mm"],
-                "mean_wall_thickness": thickness[f"segment_{segment}_mean_mm"],
-                "volume_ml": volume_ml,
-                "mass_g": MYOCARDIAL_DENSITY_G_PER_ML * volume_ml,
-            })
-        print(f"Patient {patient_id} done")
-        return rows
-    except Exception as error:
-        print(f"Patient {patient_id} failed: {error}")
-        return None
-
-
 def segment_table(groups: dict[str, pd.DataFrame], segment: int) -> pd.DataFrame:
-    """Make the table of one segment: n and each measurement as median ± std over the patients of each group.
+    """Make the table of one segment: n and each measurement as mean ± sd over the patients of each group.
+
+    Measurements without any values in a group, e.g. SLVDVI for a dataset without demographics, are left empty.
 
     Args:
         groups: Group name to that group's rows, one row per patient and segment with the columns in ``ROW_LABELS``.
@@ -75,31 +44,38 @@ def segment_table(groups: dict[str, pd.DataFrame], segment: int) -> pd.DataFrame
     """
     columns = {}
     for name, data in groups.items():
-        values = data[data["segment"] == segment]
-        column = {"n": str(values["patient_id"].nunique())}
+        rows = data[data["segment"] == segment]
+        column = {"n": str(rows["patient_id"].nunique())}
         for key, label in ROW_LABELS.items():
-            column[label] = f"{values[key].median():.2f} ± {values[key].std():.2f}"
+            values = rows[key]
+            column[label] = f"{values.mean():.2f} ± {values.std():.2f}" if values.notna().any() else ""
         columns[name] = column
     return pd.DataFrame(columns).rename_axis(f"Segment {segment}")
 
 
 if __name__ == "__main__":
-    load_dotenv(os.path.join(REPO_ROOT, ".env"))
-    root = os.environ["PROJECT_ROOT"]
-    run_folder = os.path.join(root, "output", f"{DATASET}_{AORTA_EXCLUSION_MM:g}mm")
+    root, _ = load_environment()
 
-    patient_ids = sorted(
-        (name for name in os.listdir(run_folder) if os.path.isfile(os.path.join(run_folder, name, "done.json"))),
-        key=lambda pid: int(pid) if pid.isdigit() else float("inf"),
+    parser = argparse.ArgumentParser(description="Create one table per AHA segment from the per-segment statistics.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run, as given to main_statistics_df.py.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the run (default: {AORTA_EXCLUSION_MM}).")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    args = parser.parse_args()
+
+    segment_csv = os.path.join(
+        run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir), SEGMENT_STATISTICS
     )
+    if not os.path.isfile(segment_csv):
+        raise SystemExit(f"Segment statistics not found: {segment_csv}\nRun main_statistics_df.py first.")
 
-    patient_dirs = [os.path.join(run_folder, pid) for pid in patient_ids]
-    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        rows = [row for rows in executor.map(measure_patient, patient_dirs) if rows is not None for row in rows]
-
-    data = pd.DataFrame(rows)
+    data = pd.read_csv(segment_csv)
     groups = {"All": data}
-    output_folder = os.path.join(root, "df", "segments")
+    output_folder = os.path.join(
+        table_output_dir(root, args.dataset, args.aorta_exclusion_mm, data["patient_id"].nunique()), "segments"
+    )
     os.makedirs(output_folder, exist_ok=True)
 
     for segment in SEGMENTS:

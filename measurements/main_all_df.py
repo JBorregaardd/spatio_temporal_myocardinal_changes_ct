@@ -1,95 +1,85 @@
 #################################################################################################################################################
-# This script measures the LV myocardium for all patients in the dataset and makes a 4x1 table with the medians:
-# median Volume (mL), median Mass (g), median volumetric Sphericity Index and median Sphericity Index D_mid / L.
-# If META_DATA_FILE is set in .env, the median BSA (m^2) from the metadata file is added as a fifth row.
-# The median table is saved in <df>/df_myocardium_median.csv.
-# e.g. uv run measurements/main_all_df.py
+# This script makes a table of the whole LV per group of patients from the patient summary written by main_statistics_df.py. The table has
+# a row for n and for each measurement given as mean ± sd over the patients, and a column per group of patients. For now there is one
+# group, "All"; the hypertension groups will be added later.
+# It reads <run folder>/statistics/statistics_patient_summary.csv and saves the table in
+# <df>/<dataset>_<aorta-exclusion-mm>mm_n<number of patients>/df_myocardium.csv.
+# Run main_statistics_df.py for the same --dataset and --aorta-exclusion-mm first.
+# e.g. uv run measurements/main_all_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+import argparse
 import pandas as pd
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
-from BSA import body_surface_area  # noqa: E402
-from pipeline import discover_patients, load_environment  # noqa: E402
-from sphericity_index import sphericity_index  # noqa: E402
-from volume import myocardium_volume  # noqa: E402
+from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir, table_output_dir  # noqa: E402
 
-MYOCARDIAL_DENSITY_G_PER_ML = 1.055  # Fuchs et al. 2016
-WORKERS = max(1, (os.cpu_count() or 2) - 1)
+PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 ROW_LABELS = {
-    "lvm_volume_ml": "Median volume (mL)",
-    "lvm_mass_g": "Median mass (g)",
-    "si_vol": "Median volumetric sphericity index",
-    "si_dl_mid": "Median sphericity index D_mid / L",
-    "BSA": "Median BSA (m^2)",
+    "lvm_volume_ml": "Volume (mL)",
+    "lvm_g": "Mass (g)",
+    "lvdv_ml": "LV diastolic volume (mL)",
+    "LVDVI": "LVDVI (mL/m^2)",
+    "Sphericity_index": "Volumetric sphericity index",
+    "lvm_average_thickness_mm": "Average thickness (mm)",
+    "lvm_max_thickness_mm": "Max thickness (mm)",
+    "height_cm": "Height (cm)",
+    "weight_kg": "Weight (kg)",
+    "bsa_m2": "BSA (m^2)",
 }
 
 
-def measure_patient(patient_id: str, segmentation_path: str) -> dict | None:
-    """Volume, mass and sphericity of the LV myocardium of one patient.
+def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Make the table of the whole LV: n and each measurement as mean ± sd over the patients of each group.
+
+    Measurements without any values in a group, e.g. BSA for a dataset without demographics, are left empty.
 
     Args:
-        patient_id: Dataset id.
-        segmentation_path: TotalSegmentator heart-chambers segmentation of the patient.
+        groups: Group name to that group's rows, one row per patient with ``patient_id`` and the columns in
+            ``ROW_LABELS``.
 
     Returns:
-        One row with ``patient_id``, volume, mass and the two sphericity indices,
-        or ``None`` if the patient could not be measured.
+        A table with one row for n and per measurement, and one column per group.
     """
-    try:
-        volume_ml = myocardium_volume(segmentation_path)["lvm_volume_ml"]
-        sphericity = sphericity_index(segmentation_path)
-        row = {
-            "patient_id": patient_id,
-            "lvm_volume_ml": volume_ml,
-            "lvm_mass_g": MYOCARDIAL_DENSITY_G_PER_ML * volume_ml,
-            "si_vol": sphericity["si_vol"],
-            "si_dl_mid": sphericity["si_dl_mid"],
-        }
-        print(f"Patient {patient_id} done")
-        return row
-    except Exception as error:
-        print(f"Patient {patient_id} failed: {error}")
-        return None
-
-
-def median_table(data: pd.DataFrame) -> pd.DataFrame:
-    """Make a table with the median of volume, mass, the two sphericity indices and, if present, BSA over all patients.
-
-    Args:
-        data: One row per patient with the columns in ``ROW_LABELS``; ``BSA`` is optional.
-
-    Returns:
-        A table with one row per measurement and a single ``Median`` column.
-    """
-    medians = data[[column for column in ROW_LABELS if column in data]].median()
-    return medians.rename(index=ROW_LABELS).to_frame(name="Median")
+    columns = {}
+    for name, data in groups.items():
+        column = {"n": str(data["patient_id"].nunique())}
+        for key, label in ROW_LABELS.items():
+            values = data[key]
+            column[label] = f"{values.mean():.2f} ± {values.std():.2f}" if values.notna().any() else ""
+        columns[name] = column
+    return pd.DataFrame(columns).rename_axis("Whole LV")
 
 
 if __name__ == "__main__":
-    root, data = load_environment()
-    patient_ids = discover_patients(data, require_image=False)
-    segmentation_paths = [data.segmentation_path(pid) for pid in patient_ids]
-    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        rows = [row for row in executor.map(measure_patient, patient_ids, segmentation_paths) if row is not None]
+    root, _ = load_environment()
 
-    data = pd.DataFrame(rows)
-    metadata_file = os.environ.get("META_DATA_FILE")
-    if metadata_file:
-        bsa = body_surface_area(pd.read_csv(metadata_file))[["patient_id", "BSA"]]
-        data = data.merge(bsa, on="patient_id", how="left")
-        print(f"BSA found for {data['BSA'].notna().sum()} of {len(data)} patients")
-    output_folder = os.path.join(root, "df")
+    parser = argparse.ArgumentParser(description="Create the whole-LV table from the patient summary statistics.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run, as given to main_statistics_df.py.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the run (default: {AORTA_EXCLUSION_MM}).")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    args = parser.parse_args()
+
+    summary_csv = os.path.join(
+        run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir), PATIENT_SUMMARY
+    )
+    if not os.path.isfile(summary_csv):
+        raise SystemExit(f"Patient summary not found: {summary_csv}\nRun main_statistics_df.py first.")
+
+    data = pd.read_csv(summary_csv)
+    groups = {"All": data}
+    output_folder = table_output_dir(root, args.dataset, args.aorta_exclusion_mm, data["patient_id"].nunique())
     os.makedirs(output_folder, exist_ok=True)
 
-    table = median_table(data)
-    print(table.round(3))
-    table_path = os.path.join(output_folder, "df_myocardium_median.csv")
-    table.to_csv(table_path)
-    print(f"Median table saved to: {table_path}")
+    table = all_table(groups)
+    print(table)
+    table_path = os.path.join(output_folder, "df_myocardium.csv")
+    table.to_csv(table_path, encoding="utf-8-sig")
+    print(f"Table saved to: {table_path}")
