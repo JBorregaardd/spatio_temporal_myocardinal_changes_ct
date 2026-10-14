@@ -15,58 +15,56 @@ RADIUS_MM = 20.0
 LENGTH_MM = 70.0
 
 
-def _grid(extent_mm: float) -> np.ndarray:
-    axis = np.arange(-extent_mm, extent_mm + VOXEL_MM, VOXEL_MM)
-    return np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
+def _grid(lower_mm: tuple[float, float, float], upper_mm: tuple[float, float, float]) -> np.ndarray:
+    axes = [np.arange(lo, hi + VOXEL_MM, VOXEL_MM) for lo, hi in zip(lower_mm, upper_mm)]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+
+
+def _half_ellipsoid(points: np.ndarray) -> np.ndarray:
+    """Points inside a half-ellipsoid with its base on z = 0, its apex at z = -LENGTH_MM and base radius RADIUS_MM."""
+    radial = np.hypot(points[:, 0], points[:, 1])
+    return (radial**2 / RADIUS_MM**2 + points[:, 2] ** 2 / LENGTH_MM**2 <= 1) & (points[:, 2] <= 0)
 
 
 def test_sphere_is_one() -> None:
-    points = _grid(RADIUS_MM + 1)
+    points = _grid((-RADIUS_MM - 1,) * 3, (RADIUS_MM + 1,) * 3)
     sphere = points[np.linalg.norm(points, axis=1) <= RADIUS_MM]
-    result = _sphericity(sphere, np.array([0.0, 0.0, RADIUS_MM]), VOXEL_MM**3, 1.0)
-    assert result["si_dl"] == pytest.approx(1, abs=0.03)
+    result = _sphericity(sphere, np.array([0.0, 0.0, RADIUS_MM]), VOXEL_MM**3)
+    assert result["long_axis_mm"] == pytest.approx(2 * RADIUS_MM, abs=VOXEL_MM)
     assert result["si_vol"] == pytest.approx(1, abs=0.03)
+    assert result["si_dl_mid"] == pytest.approx(1, abs=0.03)
 
 
-def test_half_ellipsoid_has_ellipsoid_ratio_one() -> None:
-    points = _grid(LENGTH_MM + 1)
-    inside = np.hypot(points[:, 0], points[:, 1]) ** 2 / RADIUS_MM**2 + points[:, 2] ** 2 / LENGTH_MM**2 <= 1
-    result = _sphericity(points[inside & (points[:, 2] <= 0)], np.zeros(3), VOXEL_MM**3, 1.0)
+def test_half_ellipsoid() -> None:
+    points = _grid((-RADIUS_MM - 1, -RADIUS_MM - 1, -LENGTH_MM - 1), (RADIUS_MM + 1, RADIUS_MM + 1, 0))
+    result = _sphericity(points[_half_ellipsoid(points)], np.zeros(3), VOXEL_MM**3)
     assert result["long_axis_mm"] == pytest.approx(LENGTH_MM, abs=VOXEL_MM)
-    assert result["si_dl"] == pytest.approx(2 * RADIUS_MM / LENGTH_MM, rel=0.03)
-    assert result["ellipsoid_ratio"] == pytest.approx(1, abs=0.05)
-
-
-def test_cylinder_has_blunt_ellipsoid_ratio() -> None:
-    points = _grid(LENGTH_MM + 1)
-    inside = (np.hypot(points[:, 0], points[:, 1]) <= RADIUS_MM) & (points[:, 2] <= 0) & (points[:, 2] >= -LENGTH_MM)
-    result = _sphericity(points[inside], np.zeros(3), VOXEL_MM**3, 1.0)
-    assert result["ellipsoid_ratio"] == pytest.approx(1.5, rel=0.05)
+    assert result["edv_ml"] == pytest.approx(2 / 3 * np.pi * RADIUS_MM**2 * LENGTH_MM / 1000, rel=0.02)
+    assert result["d_mid_mm"] == pytest.approx(np.sqrt(3) * RADIUS_MM, rel=0.03)
+    assert result["si_vol"] == pytest.approx(4 * RADIUS_MM**2 / LENGTH_MM**2, rel=0.03)
 
 
 def test_sphericity_index_on_rotated_segmentation(tmp_path: Path) -> None:
-    """A cylindrical LV below an LA block, tilted in image space; the transform maps it back onto z."""
+    """A half-ellipsoid LV below an LA block, tilted in image space; the indices do not depend on the orientation."""
     transform = sitk.VersorRigid3DTransform()
     transform.SetRotation((1.0, 0.5, 0.0), 0.6)
-    sitk.WriteTransform(transform, str(tmp_path / "lv17_transform.txt"))
+    rotation = np.array(transform.GetMatrix()).reshape(3, 3)
 
-    size = int(2 * (LENGTH_MM + 5) / 1.0)
+    size = int(2 * (LENGTH_MM + 5))
     image = sitk.Image([size] * 3, sitk.sitkUInt8)
     image.SetSpacing([1.0] * 3)
     image.SetOrigin([-(LENGTH_MM + 5)] * 3)
     index = np.stack(np.meshgrid(*[np.arange(size)] * 3, indexing="ij"), axis=-1).reshape(-1, 3).astype(float)
-    image_points = index + np.array(image.GetOrigin())
-    rotation = np.array(transform.GetMatrix()).reshape(3, 3)
-    lv_frame = image_points @ rotation
+    lv_frame = (index + np.array(image.GetOrigin())) @ rotation
     radial = np.hypot(lv_frame[:, 0], lv_frame[:, 1])
     labels = np.zeros(len(index), dtype=np.uint8)
-    labels[(radial <= RADIUS_MM) & (lv_frame[:, 2] < 0) & (lv_frame[:, 2] >= -LENGTH_MM)] = 3
+    labels[_half_ellipsoid(lv_frame) & (lv_frame[:, 2] < 0)] = 3
     labels[(radial <= RADIUS_MM) & (lv_frame[:, 2] >= 0) & (lv_frame[:, 2] < 30)] = 2
-    array = labels.reshape(size, size, size).transpose(2, 1, 0)
-    segmentation = sitk.GetImageFromArray(array)
+    segmentation = sitk.GetImageFromArray(labels.reshape(size, size, size).transpose(2, 1, 0))
     segmentation.CopyInformation(image)
     sitk.WriteImage(segmentation, str(tmp_path / "seg.nii.gz"))
 
-    result = sphericity_index(str(tmp_path / "seg.nii.gz"), str(tmp_path))
+    result = sphericity_index(str(tmp_path / "seg.nii.gz"))
     assert result["long_axis_mm"] == pytest.approx(LENGTH_MM, abs=1.5)
-    assert result["d_mid_mm"] == pytest.approx(2 * RADIUS_MM, rel=0.03)
+    assert result["d_mid_mm"] == pytest.approx(np.sqrt(3) * RADIUS_MM, rel=0.05)
+    assert result["si_vol"] == pytest.approx(4 * RADIUS_MM**2 / LENGTH_MM**2, rel=0.05)

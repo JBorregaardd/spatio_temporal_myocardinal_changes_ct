@@ -1,9 +1,9 @@
 #################################################################################################################################################
 # Sensitivity analysis for the aortic exclusion distance used with utils.aorta_distance_at_points.
 # For every finished patient it sweeps the exclusion distance, drops mesh vertices closer than that to the aorta, and recomputes the
-# per-segment thickness exactly like statistics_analysis.py (ring voxels -> lv17 transform -> segment). It writes CSVs and a figure that
-# show how the segment bordering the aorta recovers relative to its neighbours, how many of its voxels are lost, and how much the other
-# segments move, so a sweet spot for the distance can be chosen.
+# per-segment thickness exactly like the pipeline's thickness.json (mesh vertices -> nearest myocardium_17 point -> segment). It writes
+# CSVs and a figure that show how the segment bordering the aorta recovers relative to its neighbours, how many of its measurements are
+# lost, and how much the other segments move, so a sweet spot for the distance can be chosen.
 # It reads the pipeline run folder <output>/<DATASET>_<AORTA_EXCLUSION_MM>mm and saves to <run folder>/statistics/aorta_sensitivity.
 # Any run folder works, since dist_source.vtk is written before the pipeline applies its aortic exclusion.
 # e.g. uv run initial_data_investigation/aorta_sensitivity_analysis.py --dataset CGPS10 --aorta-exclusion-mm 2.5
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from skimage import morphology
+from scipy.spatial import cKDTree
 from vtk.util.numpy_support import vtk_to_numpy
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LVM_thickness"))
@@ -28,8 +28,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from pipeline import AORTA_EXCLUSION_MM, DataSource, load_environment, run_output_dir  # noqa: E402
 from utils import utils  # noqa: E402
 
-LVM_ID = 1
-LV_ID = 3
 FINISHED_MARKER = "done.json"
 SEGMENTS = range(1, 18)
 DEFAULT_THRESHOLDS = [float(t) for t in np.arange(0.0, 8.01, 0.5)]
@@ -41,38 +39,24 @@ OTHER_COLOR = "#eb6834"
 MUTED_INK = "#6b6a63"
 
 
-def ring_voxel_segments(
-    heart: sitk.Image, ring_nnz: tuple[np.ndarray, ...], folder: str
-) -> tuple[np.ndarray, np.ndarray]:
-    """Pair each ring voxel with the lv17 segment it lands in, exactly as statistics_analysis.py resamples them.
+def vertex_segments(vertices: np.ndarray, folder: str) -> np.ndarray:
+    """AHA segment of each thickness mesh vertex, exactly as the pipeline assigns them for ``thickness.json``.
 
-    statistics_analysis.py resamples the thickness ring image through ``lv17_transform.txt`` with nearest-neighbour
-    interpolation and reads the lv17 labels at the same target voxels. Resampling an image of ring-voxel ids instead
-    gives the same source-to-target mapping once, so every threshold can reuse it without resampling again.
+    Like ``thickness_estimation.thickness_in_17_seg``, each vertex gets the label of its nearest point on
+    ``surfaces/myocardium_17.vtk``.
 
     Args:
-        heart: TotalSegmentator heart-chambers segmentation.
-        ring_nnz: Ring voxel indices in (x, y, z) array order.
+        vertices: (N, 3) vertices of ``surfaces/dist_source.vtk``.
         folder: The patient's pipeline output folder.
 
     Returns:
-        Tuple of (ring voxel id, segment label) arrays, one entry per target voxel; a ring voxel can appear more than
-        once or not at all, matching the resampled image.
+        (N,) segment label of each vertex.
     """
-    ids = np.zeros(sitk.GetArrayViewFromImage(heart).shape[::-1], dtype=np.int32)
-    ids[ring_nnz] = np.arange(1, len(ring_nnz[0]) + 1, dtype=np.int32)
-    id_image = sitk.GetImageFromArray(ids.transpose(2, 1, 0))
-    id_image.CopyInformation(heart)
-
-    transform = sitk.ReadTransform(os.path.join(folder, "lv17_transform.txt"))
-    lv17 = sitk.ReadImage(os.path.join(folder, "segmentations", "lv17", "lv17.nii.gz"))
-    lv17_transformed = sitk.Resample(lv17, transform, sitk.sitkNearestNeighbor, 0, lv17.GetPixelID())
-    id_transformed = sitk.Resample(id_image, transform, sitk.sitkNearestNeighbor, 0, id_image.GetPixelID())
-
-    segments = sitk.GetArrayViewFromImage(lv17_transformed).ravel()
-    mapped = sitk.GetArrayViewFromImage(id_transformed).ravel()
-    valid = (mapped > 0) & np.isin(segments, list(SEGMENTS))
-    return mapped[valid].astype(np.int64) - 1, segments[valid].astype(np.int64)
+    mesh_17 = utils.read_vtk_mesh(os.path.join(folder, "surfaces", "myocardium_17.vtk"))
+    seg_points = vtk_to_numpy(mesh_17.GetPoints().GetData()).astype(np.float64)
+    seg_labels = vtk_to_numpy(mesh_17.GetPointData().GetScalars()).astype(np.float64)
+    _, closest = cKDTree(seg_points).query(vertices, workers=utils.num_threads())
+    return seg_labels[closest].astype(np.int64)
 
 
 def analyse_patient(
@@ -83,9 +67,9 @@ def analyse_patient(
 ) -> tuple[list[dict], list[dict]]:
     """Per-segment thickness for every exclusion distance, plus a thickness-vs-aorta-distance profile.
 
-    Ring voxel values follow ``utils.MeshNeighbourhood.values``, the rule statistics_analysis.py uses, so a threshold
-    equal to ``utils.AORTA_EXCLUSION_MM`` reproduces its per-segment statistics and 0 reproduces them without the
-    exclusion.
+    Thickness values are the vertex scalars of ``dist_source.vtk``, grouped by segment like the pipeline's
+    ``thickness.json``, so a threshold equal to the run's aortic exclusion distance reproduces ``thickness.json`` and 0
+    reproduces it without the exclusion.
 
     Args:
         patient_id: Dataset id.
@@ -100,43 +84,29 @@ def analyse_patient(
     heart = sitk.ReadImage(data.segmentation_path(patient_id))
     mesh = utils.read_vtk_mesh(os.path.join(folder, "surfaces", "dist_source.vtk"))
 
-    labels = sitk.GetArrayViewFromImage(heart).transpose(2, 1, 0)
-    im_bin = np.isin(labels, (LV_ID, LVM_ID))
-    ring_nnz = (im_bin & ~morphology.erosion(im_bin)).nonzero()
-    ring_points = utils.continuous_index_to_physical(heart, np.stack(ring_nnz, axis=1))
-
     vertices = vtk_to_numpy(mesh.GetPoints().GetData()).astype(np.float64)
-    scalars = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
+    thickness = vtk_to_numpy(mesh.GetPointData().GetScalars()).astype(np.float64)
     vertex_distance = utils.aorta_distance_at_points(heart, vertices, max(thresholds))
-
-    neighbourhood = utils.MeshNeighbourhood.build(ring_points, vertices)
-
-    ring_id, segment = ring_voxel_segments(heart, ring_nnz, folder)
+    segment = vertex_segments(vertices, folder)
 
     rows = []
     for threshold in thresholds:
         keep = vertex_distance > threshold if threshold > 0 else np.ones(len(vertices), dtype=bool)
-        values = neighbourhood.values(scalars, keep)
-
-        voxel_values = values[ring_id] + 1e-10
         for seg in SEGMENTS:
-            seg_values = voxel_values[segment == seg]
-            seg_values = seg_values[seg_values > 0]
+            seg_values = thickness[keep & (segment == seg)]
             rows.append(
                 {
                     "patient_id": patient_id,
                     "threshold_mm": threshold,
                     "segment": seg,
-                    "n_voxels": len(seg_values),
+                    "n_vertices": len(seg_values),
                     "median_thickness": np.median(seg_values) if len(seg_values) else np.nan,
                     "mean_thickness": np.mean(seg_values) if len(seg_values) else np.nan,
                     "vertices_removed_fraction": 1 - keep.mean(),
                 }
             )
 
-    voxel_distance = vertex_distance[neighbourhood.nearest][ring_id]
-    voxel_thickness = neighbourhood.values(scalars)[ring_id]
-    bin_index = np.floor(np.minimum(voxel_distance, max(thresholds)) / PROFILE_BIN_MM).astype(int)
+    bin_index = np.floor(np.minimum(vertex_distance, max(thresholds)) / PROFILE_BIN_MM).astype(int)
     profile = []
     for seg in SEGMENTS:
         for b in np.unique(bin_index[segment == seg]):
@@ -146,8 +116,8 @@ def analyse_patient(
                     "patient_id": patient_id,
                     "segment": seg,
                     "distance_bin_mm": b * PROFILE_BIN_MM,
-                    "n_voxels": int(in_bin.sum()),
-                    "median_thickness": float(np.median(voxel_thickness[in_bin])),
+                    "n_vertices": int(in_bin.sum()),
+                    "median_thickness": float(np.median(thickness[in_bin])),
                 }
             )
     return rows, profile
@@ -172,23 +142,25 @@ def summarise(data: pd.DataFrame, target: int, neighbours: list[int]) -> pd.Data
 
     Returns:
         One row per patient and threshold with the target-vs-neighbour gap (mm), the fraction of the target segment's
-        voxels lost relative to no exclusion, and the largest absolute change in any other segment's median (mm).
+        thickness measurements lost relative to no exclusion, and the largest absolute change in any other segment's
+        median (mm).
     """
     medians = data.pivot_table(index=["patient_id", "threshold_mm"], columns="segment", values="median_thickness")
-    voxels = data.pivot_table(index=["patient_id", "threshold_mm"], columns="segment", values="n_voxels")
+    vertices = data.pivot_table(index=["patient_id", "threshold_mm"], columns="segment", values="n_vertices")
     baseline_medians = medians.xs(0.0, level="threshold_mm")
-    baseline_voxels = voxels.xs(0.0, level="threshold_mm")
+    baseline_vertices = vertices.xs(0.0, level="threshold_mm")
 
     others = [seg for seg in medians.columns if seg != target and seg != 17]
     patient_index = medians.index.get_level_values("patient_id")
     shift = (medians[others] - baseline_medians.loc[patient_index, others].to_numpy()).abs()
 
+    baseline_target = baseline_vertices.loc[patient_index, target].to_numpy()
     return pd.DataFrame(
         {
             "target_gap_mm": medians[target] - medians[neighbours].mean(axis=1),
-            "target_voxels_lost_fraction": 1 - voxels[target] / baseline_voxels.loc[patient_index, target].to_numpy(),
+            "target_vertices_lost_fraction": 1 - vertices[target] / baseline_target,
             "max_other_shift_mm": shift.max(axis=1),
-            "target_empty": voxels[target] == 0,
+            "target_empty": vertices[target] == 0,
         }
     ).reset_index()
 
@@ -220,7 +192,7 @@ def plot_sensitivity(
     suggested: float,
     output_path: str,
 ) -> None:
-    """Four-panel figure: target gap, target voxels lost, shift in other segments, and thickness vs aorta distance.
+    """Four-panel figure: target gap, target measurements lost, other-segment shift, and thickness vs aorta distance.
 
     Args:
         summary: Output of ``summarise``.
@@ -242,15 +214,15 @@ def plot_sensitivity(
     ax.set_title(f"Segment {target} vs. its neighbours", fontsize=18)
 
     ax = axes[0, 1]
-    lost = summary.assign(target_voxels_lost_fraction=summary["target_voxels_lost_fraction"] * 100)
+    lost = summary.assign(target_vertices_lost_fraction=summary["target_vertices_lost_fraction"] * 100)
     _band(
         ax,
         x,
-        lost.groupby("threshold_mm")["target_voxels_lost_fraction"],
+        lost.groupby("threshold_mm")["target_vertices_lost_fraction"],
         TARGET_COLOR,
         "Median across patients (IQR shaded)",
     )
-    ax.set_ylabel(f"Segment {target} voxels removed (%)", fontsize=16)
+    ax.set_ylabel(f"Segment {target} measurements removed (%)", fontsize=16)
     ax.set_title(f"Cost: segment {target} coverage", fontsize=18)
 
     ax = axes[1, 0]
@@ -414,8 +386,8 @@ def main() -> None:
             gap_median=("target_gap_mm", "median"),
             gap_q25=("target_gap_mm", lambda s: s.quantile(0.25)),
             gap_q75=("target_gap_mm", lambda s: s.quantile(0.75)),
-            voxels_lost_median_pct=("target_voxels_lost_fraction", lambda s: 100 * s.median()),
-            voxels_lost_max_pct=("target_voxels_lost_fraction", lambda s: 100 * s.max()),
+            vertices_lost_median_pct=("target_vertices_lost_fraction", lambda s: 100 * s.median()),
+            vertices_lost_max_pct=("target_vertices_lost_fraction", lambda s: 100 * s.max()),
             other_shift_median=("max_other_shift_mm", "median"),
             other_shift_p95=("max_other_shift_mm", lambda s: s.quantile(0.95)),
             patients_target_empty=("target_empty", "sum"),

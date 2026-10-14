@@ -1,7 +1,7 @@
 #################################################################################################################################################
 # This script takes as input the statistics_thickness_per_segment.csv and creates scatter plots for
 # the mean/median thickness and the volume/median thickness of each segment across all patients.
-# It reads <output>/<dataset>_<aorta-exclusion-mm>/statistics/ (written by statistics_analysis.py) and saves the plot there.
+# It reads <output>/<dataset>_<aorta-exclusion-mm>/statistics/ (written by measurements/main_statistics_df.py) and saves the plot there.
 # e.g. uv run initial_data_investigation/scatter_analysis.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5
 #################################################################################################################################################
 
@@ -103,9 +103,9 @@ def main():
     )
     path = os.path.join(output_folder, "statistics_thickness_per_segment.csv")
     if not os.path.isfile(path):
-        raise SystemExit(f"{path} not found; run statistics_analysis.py with the same --dataset first.")
+        raise SystemExit(f"{path} not found; run measurements/main_statistics_df.py with the same --dataset first.")
 
-    data = pd.read_csv(path)
+    data = pd.read_csv(path, dtype={"patient_id": str})
 
     print(f"Number of patients: {data['patient_id'].nunique()}")
 

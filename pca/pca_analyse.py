@@ -3,7 +3,7 @@
 # thickness (mm) of segments 1-17 followed by the volume (mL) of segments 1-17. The features are standardised (z-scored) before the PCA,
 # since thickness and volume have different units.
 # It reads median_thickness and volume_ml from <output>/<dataset>_<aorta-exclusion-mm>mm/statistics/statistics_thickness_per_segment.csv
-# (written by initial_data_investigation/statistics_analysis.py).
+# (written by measurements/main_statistics_df.py).
 # Outputs in pca/output/<dataset>_<aorta-exclusion-mm>mm/ (ignored by git):
 #   pca_features.csv         the 34-long vector of each patient
 #   pca_eigenvalues.csv      eigenvalue, explained variance and cumulative explained variance of each component
@@ -308,7 +308,9 @@ def main() -> None:
     run_folder = run_output_dir(root, args.dataset, args.aorta_exclusion_mm)
     statistics_path = os.path.join(run_folder, "statistics", "statistics_thickness_per_segment.csv")
     if not os.path.isfile(statistics_path):
-        raise SystemExit(f"{statistics_path} not found; run statistics_analysis.py with the same --dataset first.")
+        raise SystemExit(
+            f"{statistics_path} not found; run measurements/main_statistics_df.py with the same --dataset first."
+        )
 
     output_folder = os.path.join(REPO_ROOT, "pca", "output", os.path.basename(run_folder))
     os.makedirs(output_folder, exist_ok=True)

@@ -62,5 +62,8 @@ explicit = true
 [tool.ruff]
 line-length = 120
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
 [tool.coverage.run]
 omit = ["tests/*"]

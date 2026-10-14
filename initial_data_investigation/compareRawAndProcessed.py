@@ -2,7 +2,7 @@
 # This script takes as input the raw and processed thickness data for each segment across all patients, and creates two boxplots for the
 # 6 first segments (basal) for the raw and processed data. The boxplots are saved in the output folder.
 # Raw is the pipeline run without aortic exclusion (<dataset>_0mm), processed the run with it (<dataset>_2.5mm); both need
-# statistics/statistics_thickness_per_segment.csv from statistics_analysis.py. Only patients present in both runs are compared.
+# statistics/statistics_thickness_per_segment.csv from measurements/main_statistics_df.py. Only patients present in both runs are compared.
 # e.g. uv run initial_data_investigation/compareRawAndProcessed.py --dataset ImageCAS_1-200
 #################################################################################################################################################
 
@@ -39,7 +39,7 @@ def load_basal_thickness(run_dir: str) -> pd.DataFrame:
     """
     path = os.path.join(run_dir, STATISTICS_CSV)
     if not os.path.isfile(path):
-        raise SystemExit(f"{path} not found; run statistics_analysis.py for this run first.")
+        raise SystemExit(f"{path} not found; run measurements/main_statistics_df.py for this run first.")
     data = pd.read_csv(path, dtype={"patient_id": str})
     return data[data["segment"].isin(BASAL_SEGMENTS)]
 
