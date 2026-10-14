@@ -1,66 +1,37 @@
 #################################################################################################################################################
-# This script computes, per patient, the sphericity index of the left ventricle (LV) cavity and the volume of the whole LV myocardium,
-# and plots them against each other. It only reads the TotalSegmentator heart segmentations.
-# The CSV and plot are saved in <output>/sphericity.
-# e.g. uv run initial_data_investigation/spherical_scatter.py
+# This script plots the volumetric sphericity index of the left ventricle (LV) cavity against the LVDVI (mL/m^2), one dot per patient.
+# Both are read from <output>/<dataset>_<aorta-exclusion-mm>/statistics/statistics_patient_summary.csv written by
+# measurements/main_statistics_df.py. The plot is saved in <output>/<dataset>_<aorta-exclusion-mm>/sphericity.
+# e.g. uv run initial_data_investigation/spherical_scatter.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
-from pipeline import discover_patients, load_environment  # noqa: E402
-from sphericity_index import sphericity_index  # noqa: E402
-from volume import myocardium_volume  # noqa: E402
+from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 
-SPHERICITY = "si_vol" # si_vol or si_dl_mid # Choose which sphericity index to plot against volume
-WORKERS = max(1, (os.cpu_count() or 2) - 1)
-SPHERICITY_LABELS = {
-    "si_vol": "Volumetric sphericity index",
-    "si_dl_mid": "Sphericity index D_mid / L",
-}
+STATISTICS_CSV = os.path.join("statistics", "statistics_patient_summary.csv")
 
 
-def measure_patient(patient_id: str, segmentation_path: str) -> dict | None:
-    """Sphericity of the LV cavity and volume of the whole LV myocardium of one patient.
+def plot_sphericity_vs_lvdvi(data: pd.DataFrame, output_path: str) -> None:
+    """Scatter plot of the sphericity index against LVDVI, one dot per patient.
 
     Args:
-        patient_id: Dataset id.
-        segmentation_path: TotalSegmentator heart-chambers segmentation of the patient.
-
-    Returns:
-        One row with ``patient_id`` and the outputs of ``sphericity_index`` and ``myocardium_volume``,
-        or ``None`` if the patient could not be measured.
-    """
-    try:
-        row = {"patient_id": patient_id, **sphericity_index(segmentation_path), **myocardium_volume(segmentation_path)}
-        print(f"Patient {patient_id} done")
-        return row
-    except Exception as error:
-        print(f"Patient {patient_id} failed: {error}")
-        return None
-
-
-def plot_volume_vs_sphericity(data: pd.DataFrame, sphericity: str, output_path: str) -> None:
-    """Scatter plot of LV myocardial volume against LV sphericity, one dot per patient.
-
-    Args:
-        data: One row per patient with ``lvm_volume_ml`` and the ``sphericity`` column.
-        sphericity: Column of ``data`` to put on the y-axis.
+        data: One row per patient with ``LVDVI`` and ``Sphericity_index``.
         output_path: Where to save the figure.
     """
     fig, ax = plt.subplots(figsize=(9, 7))
-    ax.scatter(data["lvm_volume_ml"], data[sphericity], color="tab:blue", alpha=0.7)
+    ax.scatter(data["LVDVI"], data["Sphericity_index"], color="tab:blue", alpha=0.7)
 
-    ax.set_xlabel("LV myocardial volume (mL)", fontsize=16)
-    ax.set_ylabel(SPHERICITY_LABELS[sphericity], fontsize=16)
-    ax.set_title(f"Myocardial volume vs. LV sphericity (n = {len(data)})", fontsize=18)
+    ax.set_xlabel("LVDVI (mL/m²)", fontsize=16)
+    ax.set_ylabel("Volumetric sphericity index", fontsize=16)
+    ax.set_title(f"LV sphericity vs. LVDVI (n = {len(data)})", fontsize=18)
     ax.tick_params(axis="both", labelsize=14)
 
     plt.tight_layout()
@@ -69,20 +40,25 @@ def plot_volume_vs_sphericity(data: pd.DataFrame, sphericity: str, output_path: 
 
 
 if __name__ == "__main__":
-    root, data = load_environment()
-    patient_ids = discover_patients(data, require_image=False)
-    segmentation_paths = [data.segmentation_path(pid) for pid in patient_ids]
-    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        rows = [row for row in executor.map(measure_patient, patient_ids, segmentation_paths) if row is not None]
+    root, _ = load_environment()
 
-    data = pd.DataFrame(rows)
-    output_folder = os.path.join(root, "output", "sphericity")
+    parser = argparse.ArgumentParser(description="Plot the LV sphericity index against LVDVI.")
+    parser.add_argument("--dataset", required=True,
+                        help="Dataset name of the pipeline run to plot, as given to main_pipeline.py.")
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+                        help=f"Aortic exclusion distance of the run to plot (default: {AORTA_EXCLUSION_MM}).")
+    parser.add_argument("--output-dir", default=None,
+                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    args = parser.parse_args()
+
+    run_folder = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
+    csv_path = os.path.join(run_folder, STATISTICS_CSV)
+    data = pd.read_csv(csv_path, dtype={"patient_id": str}).dropna(subset=["LVDVI", "Sphericity_index"])
+    if data.empty:
+        raise SystemExit(f"No patients with both LVDVI and Sphericity_index in {csv_path}.")
+
+    output_folder = os.path.join(run_folder, "sphericity")
     os.makedirs(output_folder, exist_ok=True)
-
-    csv_path = os.path.join(output_folder, "sphericity_and_volume.csv")
-    data.to_csv(csv_path, index=False)
-    print(f"Measurements saved to: {csv_path}")
-
-    plot_path = os.path.join(output_folder, f"volume_vs_{SPHERICITY}.png")
-    plot_volume_vs_sphericity(data, SPHERICITY, plot_path)
+    plot_path = os.path.join(output_folder, "sphericity_index_vs_LVDVI.png")
+    plot_sphericity_vs_lvdvi(data, plot_path)
     print(f"Plot saved to: {plot_path}")

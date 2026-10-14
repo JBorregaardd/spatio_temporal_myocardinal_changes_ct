@@ -3,7 +3,7 @@
 # It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in
 # <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV mass, LV diastolic volume and sphericity
 # index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
-# e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0 --all
+# e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
 # Demographics data is only available for the CGPS dataset, so when --dataset ImageCAS_1-200 is used, the demographics columns will be empty.
@@ -151,11 +151,6 @@ if __name__ == "__main__":
                         help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--output-dir", default=None,
                         help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
-    selection = parser.add_mutually_exclusive_group(required=True)
-    selection.add_argument("--patient-ids", "--patient-id", dest="patient_ids", nargs="+",
-                           help="Patient ids to process, e.g. --patient-ids 1 2 3 4.")
-    selection.add_argument("--all", action="store_true",
-                           help=f"Process every patient in the run folder whose pipeline run finished ({FINISHED_MARKER}).")
     parser.add_argument("--workers", type=int, default=WORKERS,
                         help=f"Patients analysed in parallel (default: {WORKERS}).")
     args = parser.parse_args()
@@ -164,13 +159,12 @@ if __name__ == "__main__":
     if not os.path.isdir(run_folder):
         raise SystemExit(f"Run folder not found: {run_folder}")
 
-    if args.all:
-        patient_ids = sorted(
-            (name for name in os.listdir(run_folder) if os.path.isfile(os.path.join(run_folder, name, FINISHED_MARKER))),
-            key=lambda pid: int(pid) if pid.isdigit() else float("inf"),
-        )
-    else:
-        patient_ids = args.patient_ids
+    patient_ids = sorted(
+        (name for name in os.listdir(run_folder) if os.path.isfile(os.path.join(run_folder, name, FINISHED_MARKER))),
+        key=lambda pid: int(pid) if pid.isdigit() else float("inf"),
+    )
+    if not patient_ids:
+        raise SystemExit(f"No finished patients ({FINISHED_MARKER}) found in {run_folder}.")
 
     patient_dirs = [os.path.join(run_folder, pid) for pid in patient_ids]
     segmentation_paths = [data.segmentation_path(pid) for pid in patient_ids]
