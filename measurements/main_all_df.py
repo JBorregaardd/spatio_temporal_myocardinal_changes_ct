@@ -22,7 +22,6 @@ PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 ROW_LABELS = {
     "lvm_volume_ml": "Volume (mL)",
     "lvm_g": "Mass (g)",
-    "lvdv_ml": "LV diastolic volume (mL)",
     "LVDVI": "LVDVI (mL/m^2)",
     "Sphericity_index": "Volumetric sphericity index",
     "lvm_average_thickness_mm": "Average thickness (mm)",

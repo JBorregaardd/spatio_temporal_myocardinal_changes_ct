@@ -1,7 +1,7 @@
 #################################################################################################################################################
 # This script creates two csv files with statistics per segment and per patient, from the outputs of the LVM thickness pipeline.
 # It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in
-# <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV mass, LV diastolic volume and sphericity
+# <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV myocardial volume and mass and the sphericity
 # index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
 # e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
@@ -55,7 +55,6 @@ PATIENT_FIELDS = [
     "lvm_average_thickness_mm",
     "lvm_volume_ml",
     "lvm_g",
-    "lvdv_ml",
     "Sphericity_index",
     "LVDVI",
 ]
@@ -134,7 +133,6 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
             "lvm_average_thickness_mm": average_thickness(patient_dir),
             "lvm_volume_ml": myocardium["lvm_volume_ml"],
             "lvm_g": myocardium["lvm_mass_g"],
-            "lvdv_ml": sphericity["edv_ml"],
             "Sphericity_index": sphericity["si_vol"],
         }
         print(f"Patient {patient_id} done")
@@ -188,7 +186,7 @@ if __name__ == "__main__":
     else:
         demographics = load_demographics()
     patients = patients.merge(demographics, on="patient_id", how="left")
-    patients["LVDVI"] = patients["lvdv_ml"] / patients["bsa_m2"].astype(float)
+    patients["LVDVI"] = patients["lvm_volume_ml"] / patients["bsa_m2"].astype(float)
 
     segments = segments.merge(patients[["patient_id", "bsa_m2"]].rename(columns={"bsa_m2": "BSA"}), on="patient_id")
     segments["SLVDVI"] = segments["volume_ml"] / segments["BSA"].astype(float)
