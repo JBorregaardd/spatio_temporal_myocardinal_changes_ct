@@ -57,6 +57,19 @@ def load_metadata_file() -> str:
     return metadata_file
 
 
+def load_translationtable_file() -> str:
+    """Path of the translationtable file in ``TRANSLATION_DATA_FILE`` from the repo-root .env or the environment."""
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(REPO_ROOT, ".env"))
+    transdata_file = os.environ.get("TRANSLATION_DATA_FILE")
+    if not transdata_file:
+        raise SystemExit("TRANSLATION_DATA_FILE is not set. Add it to the .env file in the repo root (see .env.example).")
+    return transdata_file
+
+
+
+
 if __name__ == "__main__":
     patients = body_surface_area(pd.read_csv(load_metadata_file()))
     output_dir = os.path.join(REPO_ROOT, "output")
