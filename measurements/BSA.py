@@ -67,6 +67,9 @@ def load_translationtable_file() -> str:
         raise SystemExit("TRANSLATION_DATA_FILE is not set. Add it to the .env file in the repo root (see .env.example).")
     return transdata_file
 
+def gender_and_age(transdata: pd.DataFrame) -> pd.DataFrame:
+    df = transdata[["CGPS-10y-august-2026", "CGPS-1-august-2026-PatientSex", "CGPS-1-august-2026-PatientAgeCompletedYears"]].copy()
+    
 
 
 
