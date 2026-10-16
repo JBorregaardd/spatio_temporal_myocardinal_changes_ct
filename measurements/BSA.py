@@ -64,13 +64,50 @@ def load_translationtable_file() -> str:
     load_dotenv(os.path.join(REPO_ROOT, ".env"))
     transdata_file = os.environ.get("TRANSLATION_DATA_FILE")
     if not transdata_file:
-        raise SystemExit("TRANSLATION_DATA_FILE is not set. Add it to the .env file in the repo root (see .env.example).")
+        raise SystemExit(
+            "TRANSLATION_DATA_FILE is not set. Add it to the .env file in the repo root (see .env.example)."
+        )
     return transdata_file
 
-def gender_and_age(transdata: pd.DataFrame) -> pd.DataFrame:
-    df = transdata[["CGPS-10y-august-2026", "CGPS-1-august-2026-PatientSex", "CGPS-1-august-2026-PatientAgeCompletedYears"]].copy()
-    
 
+SEX_CODES = {"M": 0, "F": 1}
+TRANSLATION_ID_COLUMNS = {"CGPS10": "CGPS-10y-august-2026", "CGPS1": "CGPS-1-august-2026"}
+
+
+def gender_and_age(transdata: pd.DataFrame, dataset: str) -> pd.DataFrame:
+    """Sex and age of each patient in the translation table at the examination of the dataset.
+
+    ``CGPS10`` uses the 10-year follow-up and ``CGPS1`` the baseline examination. For ``CGPS10`` the id column is
+    ``CGPS-10y-august-2026`` and the sex and age columns are ``CGPS-10y-august-2026-PatientSex`` and
+    ``CGPS-10y-august-2026-PatientAgeCompletedYears``, and likewise with ``CGPS-1-august-2026`` for ``CGPS1``. The
+    patient id is the number after the last ``_`` in the id column, e.g. ``0001`` in ``CGPS-10y-august-2026_0001``.
+    Rows without an id are dropped. Sex is coded 0 for men and 1 for women.
+
+    Args:
+        transdata: Translation table with the id, sex (``M``/``F``) and age columns of the dataset.
+        dataset: Dataset name, ``CGPS10`` or ``CGPS1``.
+
+    Returns:
+        One row per patient with ``patient_id``, ``sex`` (0 = man, 1 = woman) and ``age`` (years).
+
+    Raises:
+        ValueError: If the dataset has no columns in the translation table.
+    """
+    if dataset not in TRANSLATION_ID_COLUMNS:
+        raise ValueError(f"No sex and age for dataset {dataset!r}, expected one of {list(TRANSLATION_ID_COLUMNS)}.")
+    id_column = TRANSLATION_ID_COLUMNS[dataset]
+    sex_column = f"{id_column}-PatientSex"
+    age_column = f"{id_column}-PatientAgeCompletedYears"
+
+    df = transdata[[id_column, sex_column, age_column]].dropna(subset=[id_column])
+    patients = pd.DataFrame(
+        {
+            "patient_id": df[id_column].astype(str).str.extract(r"_(\d+)$", expand=False),
+            "sex": df[sex_column].astype(str).str.strip().str.upper().map(SEX_CODES).astype("Int64"),
+            "age": pd.to_numeric(df[age_column], errors="coerce"),
+        }
+    )
+    return patients.dropna(subset=["patient_id"]).groupby("patient_id").first().reset_index()
 
 
 if __name__ == "__main__":

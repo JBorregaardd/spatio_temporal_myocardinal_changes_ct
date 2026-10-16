@@ -20,7 +20,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
-from BSA import body_surface_area, load_metadata_file  # noqa: E402
+from BSA import body_surface_area, gender_and_age, load_metadata_file, load_translationtable_file  # noqa: E402
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from thickness import SEGMENTS, thickness_per_segment  # noqa: E402
@@ -60,20 +60,26 @@ PATIENT_FIELDS = [
 ]
 
 
-def load_demographics() -> pd.DataFrame:
-    """Height, weight and BSA of each patient from the metadata file, via ``BSA.py``.
+def load_demographics(dataset: str) -> pd.DataFrame:
+    """Sex, age, height, weight and BSA of each patient, via ``BSA.py``.
 
-    Sex and age are not in the metadata yet and are left empty.
+    Height, weight and BSA come from the metadata file, and sex (0 = man, 1 = woman) and age from the translation table
+    at the examination of the dataset (``CGPS10``: 10-year follow-up, ``CGPS1``: baseline).
+
+    Args:
+        dataset: Dataset name, ``CGPS10`` or ``CGPS1``.
 
     Returns:
         One row per patient with ``patient_id``, ``sex``, ``age``, ``height_cm``, ``weight_kg`` and ``bsa_m2``.
     """
     patients = body_surface_area(pd.read_csv(load_metadata_file()))
+    sex_and_age = gender_and_age(pd.read_csv(load_translationtable_file(), dtype=str), dataset)
+    patients = patients.merge(sex_and_age, on="patient_id", how="left")
     return pd.DataFrame(
         {
             "patient_id": patients["patient_id"],
-            "sex": "",
-            "age": "",
+            "sex": patients["sex"],
+            "age": patients["age"],
             "height_cm": patients["height_cm"],
             "weight_kg": patients["PatientWeight"],
             "bsa_m2": patients["BSA"],
@@ -146,14 +152,21 @@ if __name__ == "__main__":
     root, data = load_environment()
 
     parser = argparse.ArgumentParser(description="Create the per-segment and per-patient statistics tables.")
-    parser.add_argument("--dataset", required=True,
-                        help="Dataset name of the pipeline run to analyse, as given to main_pipeline.py.")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
-                        help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}).")
-    parser.add_argument("--output-dir", default=None,
-                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
-    parser.add_argument("--workers", type=int, default=WORKERS,
-                        help=f"Patients analysed in parallel (default: {WORKERS}).")
+    parser.add_argument(
+        "--dataset", required=True, help="Dataset name of the pipeline run to analyse, as given to main_pipeline.py."
+    )
+    parser.add_argument(
+        "--aorta-exclusion-mm",
+        type=float,
+        default=AORTA_EXCLUSION_MM,
+        help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}).",
+    )
+    parser.add_argument(
+        "--output-dir", default=None, help="Parent of the run folders (default: <PROJECT_ROOT>/output)."
+    )
+    parser.add_argument(
+        "--workers", type=int, default=WORKERS, help=f"Patients analysed in parallel (default: {WORKERS})."
+    )
     args = parser.parse_args()
 
     run_folder = run_output_dir(root, args.dataset, args.aorta_exclusion_mm, args.output_dir)
@@ -184,7 +197,7 @@ if __name__ == "__main__":
     if args.dataset in DATASETS_WITHOUT_DEMOGRAPHICS:
         demographics = pd.DataFrame(columns=["patient_id", "sex", "age", "height_cm", "weight_kg", "bsa_m2"])
     else:
-        demographics = load_demographics()
+        demographics = load_demographics(args.dataset)
     patients = patients.merge(demographics, on="patient_id", how="left")
     patients["LVDVI"] = patients["lvm_volume_ml"] / patients["bsa_m2"].astype(float)
 

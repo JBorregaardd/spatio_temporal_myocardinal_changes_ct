@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "measurements"))
 
-from BSA import body_surface_area, calculate_bsa  # noqa: E402
+from BSA import body_surface_area, calculate_bsa, gender_and_age  # noqa: E402
 
 
 def test_du_bois_reference_value() -> None:
@@ -36,3 +36,39 @@ def test_one_row_per_patient_with_first_valid_height_and_weight() -> None:
     assert patients.loc["0000", "BSA"] == pytest.approx(calculate_bsa(70.0, 175.0))
     assert patients.loc["0001", "BSA"] == pytest.approx(calculate_bsa(55.0, 160.0))
     assert np.isnan(patients.loc["0002", "BSA"])
+
+
+def test_gender_and_age_strips_prefix_and_codes_sex() -> None:
+    transdata = pd.DataFrame(
+        {
+            "CGPS-10y-august-2026": ["CGPS-10y-august-2026_0000", "CGPS-10y-august-2026_0001", np.nan],
+            "CGPS-10y-august-2026-PatientSex": ["M", "F", "M"],
+            "CGPS-10y-august-2026-PatientAgeCompletedYears": ["65", "72", "50"],
+        }
+    )
+    patients = gender_and_age(transdata, "CGPS10").set_index("patient_id")
+
+    assert list(patients.index) == ["0000", "0001"]
+    assert patients.loc["0000", "sex"] == 0
+    assert patients.loc["0001", "sex"] == 1
+    assert patients.loc["0001", "age"] == 72
+
+
+def test_gender_and_age_uses_baseline_columns_for_cgps1() -> None:
+    transdata = pd.DataFrame(
+        {
+            "CGPS-1-august-2026": ["CGPS-1-august-2026_0000"],
+            "CGPS-1-august-2026-PatientSex": ["F"],
+            "CGPS-1-august-2026-PatientAgeCompletedYears": ["55"],
+            "CGPS-10y-august-2026": ["CGPS-10y-august-2026_0000"],
+            "CGPS-10y-august-2026-PatientSex": ["F"],
+            "CGPS-10y-august-2026-PatientAgeCompletedYears": ["65"],
+        }
+    )
+    assert gender_and_age(transdata, "CGPS1").set_index("patient_id").loc["0000", "age"] == 55
+    assert gender_and_age(transdata, "CGPS10").set_index("patient_id").loc["0000", "age"] == 65
+
+
+def test_gender_and_age_rejects_unknown_dataset() -> None:
+    with pytest.raises(ValueError):
+        gender_and_age(pd.DataFrame(), "ImageCAS_1-200")
