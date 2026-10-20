@@ -54,6 +54,24 @@ def test_gender_and_age_strips_prefix_and_codes_sex() -> None:
     assert patients.loc["0001", "age"] == 72
 
 
+def test_gender_and_age_keeps_binary_sex_codes() -> None:
+    transdata = pd.DataFrame(
+        {
+            "CGPS-10y-august-2026": [
+                "CGPS-10y-august-2026_0000",
+                "CGPS-10y-august-2026_0001",
+                "CGPS-10y-august-2026_0002",
+                "CGPS-10y-august-2026_0003",
+            ],
+            "CGPS-10y-august-2026-PatientSex": ["0", "1", "0.0", "1.0"],
+            "CGPS-10y-august-2026-PatientAgeCompletedYears": ["65", "72", "50", "80"],
+        }
+    )
+    patients = gender_and_age(transdata, "CGPS10").set_index("patient_id")
+
+    assert list(patients["sex"]) == [0, 1, 0, 1]
+
+
 def test_gender_and_age_uses_baseline_columns_for_cgps1() -> None:
     transdata = pd.DataFrame(
         {

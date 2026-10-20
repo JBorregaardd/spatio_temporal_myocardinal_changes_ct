@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO_ROOT / "measurements"))
 sys.path.insert(0, str(REPO_ROOT / "LVM_thickness"))
 
 from BSA import (  # noqa: E402
+    SEX_CODES,
     TRANSLATION_ID_COLUMNS,
     body_surface_area,
     gender_and_age,
@@ -82,7 +83,11 @@ def test_translation_table_gives_sex_and_age() -> None:
 
     sex_and_age = gender_and_age(transdata, DATASET)
     assert len(sex_and_age) > 0
+    raw_sex = transdata[f"{id_column}-PatientSex"].dropna().str.strip().str.upper()
+    unknown = sorted(set(raw_sex) - set(SEX_CODES))
+    assert not unknown, f"Sex values in the translation table that are not in SEX_CODES: {unknown}"
     assert sex_and_age["sex"].notna().any(), "No patient has a sex."
+    assert set(sex_and_age["sex"].dropna()) <= {0, 1}
 
 
 def test_load_demographics_as_in_statistics_script() -> None:

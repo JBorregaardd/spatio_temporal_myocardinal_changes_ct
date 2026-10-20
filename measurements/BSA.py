@@ -70,7 +70,7 @@ def load_translationtable_file() -> str:
     return transdata_file
 
 
-SEX_CODES = {"M": 0, "F": 1}
+SEX_CODES = {"M": 0, "F": 1, "0": 0, "1": 1, "0.0": 0, "1.0": 1}
 TRANSLATION_ID_COLUMNS = {"CGPS10": "CGPS-10y-august-2026", "CGPS1": "CGPS-1-august-2026"}
 
 
@@ -81,10 +81,11 @@ def gender_and_age(transdata: pd.DataFrame, dataset: str) -> pd.DataFrame:
     ``CGPS-10y-august-2026`` and the sex and age columns are ``CGPS-10y-august-2026-PatientSex`` and
     ``CGPS-10y-august-2026-PatientAgeCompletedYears``, and likewise with ``CGPS-1-august-2026`` for ``CGPS1``. The
     patient id is the number after the last ``_`` in the id column, e.g. ``0001`` in ``CGPS-10y-august-2026_0001``.
-    Rows without an id are dropped. Sex is coded 0 for men and 1 for women.
+    Rows without an id are dropped. Sex is coded 0 for men and 1 for women, and may be given in the table either as
+    ``M``/``F`` or already as ``0``/``1``.
 
     Args:
-        transdata: Translation table with the id, sex (``M``/``F``) and age columns of the dataset.
+        transdata: Translation table with the id, sex (``M``/``F`` or ``0``/``1``) and age columns of the dataset.
         dataset: Dataset name, ``CGPS10`` or ``CGPS1``.
 
     Returns:
