@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir, table_output_dir  # noqa: E402
 
 PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
+FEMALE_LABEL = "Female (%)"
 ROW_LABELS = {
+    "age": "Age (years)",
     "lvm_volume_ml": "Volume (mL)",
     "lvm_g": "Mass (g)",
     "LVDVI": "LVDVI (mL/m^2)",
@@ -33,13 +35,14 @@ ROW_LABELS = {
 
 
 def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Make the table of the whole LV: n and each measurement as mean ± sd over the patients of each group.
+    """Make the table of the whole LV: n, the share of women and each measurement as mean ± sd per group of patients.
 
-    Measurements without any values in a group, e.g. BSA for a dataset without demographics, are left empty.
+    The share of women is the percentage of patients with ``sex`` 1 among the patients with a known sex. Rows without
+    any values in a group, e.g. BSA for a dataset without demographics, are left empty.
 
     Args:
-        groups: Group name to that group's rows, one row per patient with ``patient_id`` and the columns in
-            ``ROW_LABELS``.
+        groups: Group name to that group's rows, one row per patient with ``patient_id``, ``sex`` (0 = man,
+            1 = woman) and the columns in ``ROW_LABELS``.
 
     Returns:
         A table with one row for n and per measurement, and one column per group.
@@ -47,6 +50,8 @@ def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
     columns = {}
     for name, data in groups.items():
         column = {"n": str(data["patient_id"].nunique())}
+        sex = data["sex"].dropna()
+        column[FEMALE_LABEL] = f"{(sex == 1).mean() * 100:.2f}" if len(sex) else ""
         for key, label in ROW_LABELS.items():
             values = data[key]
             column[label] = f"{values.mean():.2f} ± {values.std():.2f}" if values.notna().any() else ""
