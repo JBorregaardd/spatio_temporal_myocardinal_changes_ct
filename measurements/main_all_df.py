@@ -3,9 +3,10 @@
 # a row for n and for each measurement given as mean ± sd over the patients, and a column per group of patients. For now there is one
 # group, "All"; the hypertension groups will be added later.
 # It reads <run folder>/statistics/statistics_patient_summary.csv and saves the table in
-# <df>/<dataset>_<aorta-exclusion-mm>mm_n<number of patients>/df_myocardium.csv.
+# <df>/<dataset>_<aorta-exclusion-mm>mm_n<number of patients>/df_myocardium.csv. With --sex male or --sex female only those patients are
+# included and the table is saved as df_myocardium_<sex>.csv in the same folder.
 # Run main_statistics_df.py for the same --dataset and --aorta-exclusion-mm first.
-# e.g. uv run measurements/main_all_df.py --dataset CGPS10 --aorta-exclusion-mm 0
+# e.g. uv run measurements/main_all_df.py --dataset CGPS10 --aorta-exclusion-mm 0 --sex female
 #################################################################################################################################################
 
 import os
@@ -20,6 +21,8 @@ from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir, table
 
 PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 FEMALE_LABEL = "Female (%)"
+SEX_CODES = {"male": 0, "female": 1}
+SEX_CHOICES = ["all", *SEX_CODES]
 ROW_LABELS = {
     "age": "Age (years)",
     "lvm_volume_ml": "Volume (mL)",
@@ -32,6 +35,26 @@ ROW_LABELS = {
     "weight_kg": "Weight (kg)",
     "bsa_m2": "BSA (m^2)",
 }
+
+
+def select_sex(data: pd.DataFrame, sex: str) -> pd.DataFrame:
+    """Keep the rows of the patients of one sex.
+
+    Args:
+        data: Rows with a ``sex`` column (0 = man, 1 = woman).
+        sex: ``"all"``, ``"male"`` or ``"female"``.
+
+    Returns:
+        The rows of that sex, or all rows for ``"all"``.
+    """
+    if sex == "all":
+        return data
+    return data[data["sex"] == SEX_CODES[sex]]
+
+
+def sex_suffix(sex: str) -> str:
+    """File name suffix of the tables of one sex: empty for ``"all"``, else e.g. ``"_female"``."""
+    return "" if sex == "all" else f"_{sex}"
 
 
 def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -69,6 +92,8 @@ if __name__ == "__main__":
                         help=f"Aortic exclusion distance of the run (default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--output-dir", default=None,
                         help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    parser.add_argument("--sex", choices=SEX_CHOICES, default="all",
+                        help="Only include the patients of this sex (default: all).")
     args = parser.parse_args()
 
     summary_csv = os.path.join(
@@ -78,12 +103,15 @@ if __name__ == "__main__":
         raise SystemExit(f"Patient summary not found: {summary_csv}\nRun main_statistics_df.py first.")
 
     data = pd.read_csv(summary_csv)
-    groups = {"All": data}
     output_folder = table_output_dir(root, args.dataset, args.aorta_exclusion_mm, data["patient_id"].nunique())
+    data = select_sex(data, args.sex)
+    if data.empty:
+        raise SystemExit(f"No patients with sex '{args.sex}' in {summary_csv}.")
+    groups = {args.sex.capitalize(): data}
     os.makedirs(output_folder, exist_ok=True)
 
     table = all_table(groups)
     print(table)
-    table_path = os.path.join(output_folder, "df_myocardium.csv")
+    table_path = os.path.join(output_folder, f"df_myocardium{sex_suffix(args.sex)}.csv")
     table.to_csv(table_path, encoding="utf-8-sig")
     print(f"Table saved to: {table_path}")
