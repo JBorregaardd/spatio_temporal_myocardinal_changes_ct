@@ -218,7 +218,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true", help="Reprocess patients that already have done.json.")
     parser.add_argument("--no-plots", action="store_true", help="Skip the histogram and bullseye figures (~25s each).")
     parser.add_argument("--debug-meshes", action="store_true", help="Also write the QA-only vectors.vtk mesh (~7s).")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
+    parser.add_argument("--aorta-exclusion-mm", type=float, default=0.0,
                         help=f"Ignore thickness within this distance (mm) of the aorta; 0 disables it "
                              f"(default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--timeout-min", type=float, default=30.0,

@@ -15,7 +15,7 @@ SCAN_TYPE = "ED"
 DEFAULT_IMAGE_PATTERN = "{id}.img.nii.gz"
 DEFAULT_SEGMENTATION_PATTERN = "{id}.heart.nii.gz"
 DONE_MARKER = "done.json"
-AORTA_EXCLUSION_MM = 2.5
+AORTA_EXCLUSION_MM = 0
 
 
 @dataclass(frozen=True)
