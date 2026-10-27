@@ -88,7 +88,9 @@ def load_demographics(dataset: str) -> pd.DataFrame:
 
 
 def average_thickness(patient_dir: str) -> float:
-    """Mean of all wall thickness measurements in the 17 AHA segments of one patient.
+    """Mean of all wall thickness measurements in AHA segments 1-16 of one patient.
+
+    The apex (segment 17) is left out, as its thickness differs markedly from the other segments.
 
     Args:
         patient_dir: The patient's output folder from the LVM thickness pipeline.
@@ -98,7 +100,7 @@ def average_thickness(patient_dir: str) -> float:
     """
     with open(os.path.join(patient_dir, "thickness.json")) as f:
         thickness = {int(float(segment)): values for segment, values in json.load(f).items()}
-    values = [value for segment in SEGMENTS for value in thickness.get(segment, [])]
+    values = [value for segment in WALL_THICKNESS_SEGMENTS for value in thickness.get(segment, [])]
     return float(np.mean(values)) if values else np.nan
 
 
