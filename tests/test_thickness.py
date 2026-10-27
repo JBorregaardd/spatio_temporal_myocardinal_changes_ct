@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "measurements"))
 
-from thickness import madwt, thickness_per_segment  # noqa: E402
+from thickness import madwt, septal_lateral_ratio, thickness_per_segment  # noqa: E402
 
 
 def test_thickness_per_segment(tmp_path: Path) -> None:
@@ -32,3 +32,18 @@ def test_madwt(tmp_path: Path) -> None:
 def test_madwt_missing_segment(tmp_path: Path) -> None:
     (tmp_path / "thickness.json").write_text(json.dumps({f"{segment}.0": [8.0] for segment in range(1, 16)}))
     assert np.isnan(madwt(str(tmp_path)))
+
+
+def test_septal_lateral_ratio(tmp_path: Path) -> None:
+    thickness = {f"{segment}.0": [5.0] for segment in range(1, 18)}
+    thickness["9.0"] = [6.0, 12.0]
+    thickness["11.0"] = [8.0]
+    thickness["14.0"] = [30.0]
+    thickness["4.0"] = [30.0]
+    (tmp_path / "thickness.json").write_text(json.dumps(thickness))
+    assert septal_lateral_ratio(str(tmp_path)) == pytest.approx(1.5)
+
+
+def test_septal_lateral_ratio_missing_wall(tmp_path: Path) -> None:
+    (tmp_path / "thickness.json").write_text(json.dumps({"2.0": [8.0], "3.0": [9.0]}))
+    assert np.isnan(septal_lateral_ratio(str(tmp_path)))

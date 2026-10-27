@@ -6,6 +6,8 @@ import numpy as np
 
 SEGMENTS = range(1, 18)
 WALL_SEGMENTS = range(1, 17)
+SEPTAL_SEGMENTS = (2, 3, 8, 9)
+LATERAL_SEGMENTS = (5, 6, 11, 12)
 
 
 def load_thickness(patient_dir: str) -> dict[int, np.ndarray]:
@@ -60,3 +62,23 @@ def madwt(patient_dir: str) -> float:
         return np.nan
     maxima = np.array([thickness[segment].max() for segment in WALL_SEGMENTS])
     return float(np.mean(np.abs(maxima - maxima.mean())))
+
+
+def septal_lateral_ratio(patient_dir: str) -> float:
+    """Septal-to-lateral ratio (SLR) of the maximum wall thickness of one patient, after Shiwani et al.
+
+    SLR is the maximum thickness in the basal and mid septal segments (AHA 2, 3, 8, 9) divided by the maximum
+    thickness in the basal and mid lateral segments (AHA 5, 6, 11, 12).
+
+    Args:
+        patient_dir: The patient's output folder from the LVM thickness pipeline.
+
+    Returns:
+        SLR, NaN if the septal or lateral segments have no measurements.
+    """
+    thickness = load_thickness(patient_dir)
+    septal = np.concatenate([thickness.get(segment, np.array([])) for segment in SEPTAL_SEGMENTS])
+    lateral = np.concatenate([thickness.get(segment, np.array([])) for segment in LATERAL_SEGMENTS])
+    if len(septal) == 0 or len(lateral) == 0:
+        return np.nan
+    return float(septal.max() / lateral.max())
