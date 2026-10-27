@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "measurements"))
 
-from thickness import thickness_per_segment  # noqa: E402
+from thickness import madwt, thickness_per_segment  # noqa: E402
 
 
 def test_thickness_per_segment(tmp_path: Path) -> None:
@@ -20,3 +20,15 @@ def test_thickness_per_segment(tmp_path: Path) -> None:
     assert result["segment_17_median_mm"] == pytest.approx(5.0)
     assert np.isnan(result["segment_2_median_mm"])
     assert len(result) == 17 * 3
+
+
+def test_madwt(tmp_path: Path) -> None:
+    thickness = {f"{segment}.0": [0.5, float(segment)] for segment in range(1, 17)}
+    thickness["17.0"] = [100.0]
+    (tmp_path / "thickness.json").write_text(json.dumps(thickness))
+    assert madwt(str(tmp_path)) == pytest.approx(4.0)
+
+
+def test_madwt_missing_segment(tmp_path: Path) -> None:
+    (tmp_path / "thickness.json").write_text(json.dumps({f"{segment}.0": [8.0] for segment in range(1, 16)}))
+    assert np.isnan(madwt(str(tmp_path)))

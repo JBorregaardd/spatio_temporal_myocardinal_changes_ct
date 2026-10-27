@@ -31,6 +31,7 @@ ROW_LABELS = {
     "Sphericity_index": "Volumetric sphericity index",
     "lvm_average_thickness_mm": "Average thickness (mm)",
     "lvm_max_thickness_mm": "Max thickness (mm)",
+    "MadWT_mm": "MadWT (mm)",
     "height_cm": "Height (cm)",
     "weight_kg": "Weight (kg)",
     "bsa_m2": "BSA (m^2)",

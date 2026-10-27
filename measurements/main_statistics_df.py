@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 from BSA import body_surface_area, gender_and_age, load_metadata_file, load_translationtable_file  # noqa: E402
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
-from thickness import SEGMENTS, thickness_per_segment  # noqa: E402
+from thickness import SEGMENTS, madwt, thickness_per_segment  # noqa: E402
 from volume import myocardium_volume, segment_volume  # noqa: E402
 
 DATASETS_WITHOUT_DEMOGRAPHICS = {"ImageCAS_1-200"}
@@ -53,6 +53,7 @@ PATIENT_FIELDS = [
     "bsa_m2",
     "lvm_max_thickness_mm",
     "lvm_average_thickness_mm",
+    "MadWT_mm",
     "lvm_volume_ml",
     "lvm_g",
     "Sphericity_index",
@@ -139,6 +140,7 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
                 [thickness[f"segment_{segment}_median_mm"] for segment in WALL_THICKNESS_SEGMENTS]
             ),
             "lvm_average_thickness_mm": average_thickness(patient_dir),
+            "MadWT_mm": madwt(patient_dir),
             "lvm_volume_ml": myocardium["lvm_volume_ml"],
             "lvm_g": myocardium["lvm_mass_g"],
             "Sphericity_index": sphericity["si_vol"],
