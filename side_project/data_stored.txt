@@ -13,3 +13,71 @@
 /storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0002_SERIES0013_volume_1.nii.gz
 /storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0003_SERIES0013_volume_1.nii.gz
 /storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0004_SERIES0013_volume_1.nii.gz
+
+
+
+
+/home/s181487/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/make_phase_dataset.py:102 in main                                                          │
+│                                                                                                                                                                           │
+│    99 │   copy: bool = typer.Option(False, help="Copy the scans instead of symlinking them."),                                                                            │
+│   100 ) -> None:                                                                                                                                                          │
+│   101 │   """Build the ED/ES dataset and write ``dataset.csv``."""                                                                                                        │
+│ ❱ 102 │   ed_scans = read_filelist(ed_filelist)                                                                                                                           │
+│   103 │   es_scans = read_filelist(es_filelist)                                                                                                                           │
+│   104 │   patient_ids = sample_patients(ed_scans, es_scans, n_patients, seed)                                                                                             │
+│   105 │   rows = build_dataset(ed_scans, es_scans, patient_ids, output_folder, copy)                                                                                      │
+│                                                                                                                                                                           │
+│ ╭─────────────────────────────────────────────── locals ────────────────────────────────────────────────╮                                                                 │
+│ │          copy = True                                                                                  │                                                                 │
+│ │   ed_filelist = '/storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_ca'+24 │                                                                 │
+│ │   es_filelist = '/storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_ca'+24 │                                                                 │
+│ │    n_patients = 100                                                                                   │                                                                 │
+│ │ output_folder = '/data/Data/JERI/data/CGPS10_ED_ES'                                                   │                                                                 │
+│ │          seed = 42                                                                                    │                                                                 │
+│ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────╯                                                                 │
+│                                                                                                                                                                           │
+│ /home/s181487/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/make_phase_dataset.py:48 in read_filelist                                                  │
+│                                                                                                                                                                           │
+│    45 │   for line in lines:                                                                                                                                              │
+│    46 │   │   match = PATIENT_ID.search(line)                                                                                                                             │
+│    47 │   │   if match is None:                                                                                                                                           │
+│ ❱  48 │   │   │   raise ValueError(f"No patient id in line of {path}: {line}")                                                                                            │
+│    49 │   │   scans.setdefault(match.group(1), line)                                                                                                                      │
+│    50 │   return scans                                                                                                                                                    │
+│    51                                                                                                                                                                     │
+│                                                                                                                                                                           │
+│ ╭─────────────────────────────────────────────────────────────────────────────── locals ────────────────────────────────────────────────────────────────────────────────╮ │
+│ │  file = <_io.TextIOWrapper name='/storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_cardiac_ED_CE_fullpath.txt' mode='r' encoding='UTF-8'> │ │
+│ │  line = '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0013_SERIES000'+8                                                                          │ │
+│ │ lines = [                                                                                                                                                             │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0000_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0001_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0002_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0003_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0004_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0005_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0006_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0007_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0008_SERIES001'+17,                                                                    │ │
+│ │         │   '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0009_SERIES001'+17,                                                                    │ │
+│ │         │   ... +1998                                                                                                                                                 │ │
+│ │         ]                                                                                                                                                             │ │
+│ │ match = None                                                                                                                                                          │ │
+│ │  path = '/storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_ca'+24                                                                         │ │
+│ │ scans = {                                                                                                                                                             │ │
+│ │         │   '0000': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0000_SERIES001'+17,                                                            │ │
+│ │         │   '0001': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0001_SERIES001'+17,                                                            │ │
+│ │         │   '0002': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0002_SERIES001'+17,                                                            │ │
+│ │         │   '0003': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0003_SERIES001'+17,                                                            │ │
+│ │         │   '0004': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0004_SERIES001'+17,                                                            │ │
+│ │         │   '0005': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0005_SERIES001'+17,                                                            │ │
+│ │         │   '0006': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0006_SERIES001'+17,                                                            │ │
+│ │         │   '0007': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0007_SERIES001'+17,                                                            │ │
+│ │         │   '0008': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0008_SERIES001'+17,                                                            │ │
+│ │         │   '0009': '/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0009_SERIES001'+17,                                                            │ │
+│ │         │   ... +3                                                                                                                                                    │ │
+│ │         }                                                                                                                                                             │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ValueError: No patient id in line of /storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_cardiac_ED_CE_fullpath.txt: 
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0013_SERIES0005.nii.gz
