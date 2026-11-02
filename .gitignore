@@ -184,3 +184,6 @@ cython_debug/
 
 # PCA outputs
 /pca/output/
+
+# Valve plane images
+/side_project/valve_planes/output/

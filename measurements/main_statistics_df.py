@@ -1,8 +1,8 @@
 #################################################################################################################################################
 # This script creates two csv files with statistics per segment and per patient, from the outputs of the LVM thickness pipeline.
 # It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in
-# <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV myocardial volume and mass and the sphericity
-# index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
+# <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV myocardial volume and mass, the LV blood pool
+# volume and the sphericity index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
 # e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
@@ -24,7 +24,7 @@ from BSA import body_surface_area, gender_and_age, load_metadata_file, load_tran
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from thickness import SEGMENTS, madwt, septal_lateral_ratio, thickness_per_segment  # noqa: E402
-from volume import myocardium_volume, segment_volume  # noqa: E402
+from volume import blood_pool_volume, myocardium_volume, segment_volume  # noqa: E402
 
 DATASETS_WITHOUT_DEMOGRAPHICS = {"ImageCAS_1-200"}
 FINISHED_MARKER = "done.json"
@@ -57,6 +57,7 @@ PATIENT_FIELDS = [
     "SLR",
     "lvm_volume_ml",
     "lvm_g",
+    "lv_blood_pool_volume_ml",
     "Sphericity_index",
     "LVDVI",
 ]
@@ -135,6 +136,7 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
 
         sphericity = sphericity_index(segmentation_path)
         myocardium = myocardium_volume(segmentation_path)
+        blood_pool = blood_pool_volume(segmentation_path)
         patient_row = {
             "patient_id": patient_id,
             "lvm_max_thickness_mm": np.nanmax(
@@ -145,6 +147,7 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
             "SLR": septal_lateral_ratio(patient_dir),
             "lvm_volume_ml": myocardium["lvm_volume_ml"],
             "lvm_g": myocardium["lvm_mass_g"],
+            "lv_blood_pool_volume_ml": blood_pool["lv_blood_pool_volume_ml"],
             "Sphericity_index": sphericity["si_vol"],
         }
         print(f"Patient {patient_id} done")
@@ -205,7 +208,7 @@ if __name__ == "__main__":
     else:
         demographics = load_demographics(args.dataset)
     patients = patients.merge(demographics, on="patient_id", how="left")
-    patients["LVDVI"] = patients["lvm_volume_ml"] / patients["bsa_m2"].astype(float)
+    patients["LVDVI"] = patients["lv_blood_pool_volume_ml"] /patients["bsa_m2"].astype(float)
 
     segments = segments.merge(patients[["patient_id", "bsa_m2"]].rename(columns={"bsa_m2": "BSA"}), on="patient_id")
     segments["SLVDVI"] = segments["volume_ml"] / segments["BSA"].astype(float)
