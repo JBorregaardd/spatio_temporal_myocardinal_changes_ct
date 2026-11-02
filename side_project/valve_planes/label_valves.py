@@ -195,7 +195,7 @@ function render() {
     views.className = "views";
     for (const [view, caption] of VIEWS) {
       const figure = document.createElement("figure");
-      figure.innerHTML = `<img src="/img/${id}_${valve}_${view}.png" alt="${view}"><figcaption>${caption}</figcaption>`;
+      figure.innerHTML = `<img src="img/${id}_${valve}_${view}.png" alt="${view}"><figcaption>${caption}</figcaption>`;
       views.appendChild(figure);
     }
     section.appendChild(views);
@@ -205,7 +205,7 @@ function render() {
 
 async function setLabel(valve, value) {
   const id = patients[index];
-  const response = await fetch("/api/label", {method: "POST", headers: {"Content-Type": "application/json"},
+  const response = await fetch("api/label",{method: "POST", headers: {"Content-Type": "application/json"},
                                                body: JSON.stringify({patient_id: id, valve, value})});
   if (!response.ok) { alert(await response.text()); return; }
   labels[id] = await response.json();
@@ -238,7 +238,7 @@ document.getElementById("size").addEventListener("input", event => {
   document.documentElement.style.setProperty("--size", `${event.target.value}px`);
 });
 
-fetch("/api/state").then(r => r.json()).then(state => {
+fetch("api/state").then(r => r.json()).then(state => {
   ({patients, labels, values} = state);
   index = Math.max(0, patients.findIndex(id => !done(id)));
   render();
