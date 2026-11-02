@@ -255,6 +255,14 @@ def main(
     port: int = typer.Option(8765, help="Port to serve on (localhost only)."),
 ) -> None:
     """Serve the labelling tool on http://localhost:<port> until interrupted with Ctrl+C."""
+    image_folder = os.path.abspath(image_folder)
+    if not os.path.isdir(image_folder):
+        raise SystemExit(f"Folder not found: {image_folder}")
+    if not find_patients(image_folder):
+        n_png = len(glob.glob(os.path.join(image_folder, "*.png")))
+        raise SystemExit(
+            f"No <id>_valves.json files in {image_folder} ({n_png} PNG files); run valve_planes.py on this folder first"
+        )
     labels_path = labels_path or os.path.join(image_folder, "labels.csv")
     labels = load_labels(labels_path)
     handler = partial(LabelHandler, image_folder=image_folder, labels_path=labels_path, labels=labels)
