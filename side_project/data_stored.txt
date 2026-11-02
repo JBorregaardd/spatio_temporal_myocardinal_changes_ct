@@ -16,4 +16,9 @@
 
 
 
+uv run side_project/valve_planes/valve_planes.py \
+    /data/Data/JERI/data/CGPS10_ED_ES/blinded/images \
+    /data/Data/JERI/data/CGPS10_ED_ES/blinded/segmentations \
+    /data/Data/JERI/data/CGPS10_ED_ES/valve_planes \
+    --image-pattern "{id}.nii.gz"
 
