@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import SimpleITK as sitk
+from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "side_project" / "valve_planes"))
@@ -16,13 +17,12 @@ from valve_planes import (  # noqa: E402
     LEFT_VENTRICLE_ID,
     MYOCARDIUM_ID,
     VALVES,
-    SliceSettings,
     adaptive_window,
     find_scans,
     locate_valve,
     orient_towards,
     process_scan,
-    sample_valve_image,
+    valve_views,
     window,
 )
 
@@ -69,51 +69,41 @@ def test_orient_towards_points_u_at_other_valve() -> None:
     assert np.allclose(np.cross(mitral.in_plane_u, mitral.in_plane_v), mitral.normal, atol=1e-6)
 
 
-def test_parallel_views_stack_slices_along_normal() -> None:
+def test_process_scan_writes_50_mm_images_and_metadata(tmp_path: Path) -> None:
     labels = _labels()
-    ct = _image(np.where(labels == LEFT_ATRIUM_ID, 1000.0, -1000.0).astype(np.float32))
-    plane = locate_valve(_image(labels), labels, VALVES[1])
-    settings = SliceSettings(field_of_view_mm=10.0, resolution_mm=1.0, slab_offset_mm=4.0, views="parallel")
-    image = sample_valve_image(ct, plane, settings)
-    assert image.shape == (10, 10, 3)
-    assert image.dtype == np.uint8
-    assert (image[..., 0] == 255).all()
-    assert (image[..., 2] == 0).all()
-
-
-def test_process_scan_writes_images_and_metadata(tmp_path: Path) -> None:
-    labels = _labels()
-    sitk.WriteImage(_image(np.full(SHAPE_ZYX, 100, dtype=np.int16)), str(tmp_path / "ct.nii.gz"))
+    labels[0:3, 0:3, 0:3] = MYOCARDIUM_ID
+    hu = np.select([labels == MYOCARDIUM_ID, labels > 0], [100, 400], -1000).astype(np.int16)
+    sitk.WriteImage(_image(hu), str(tmp_path / "ct.nii.gz"))
     (tmp_path / "ct.nii.gz").rename(tmp_path / "7.img.nii.gz")
     sitk.WriteImage(_image(labels), str(tmp_path / "7.heart.nii.gz"))
     assert find_scans(str(tmp_path), "{id}.img.nii.gz") == {"7": str(tmp_path / "7.img.nii.gz")}
 
-    settings = SliceSettings(window="fixed")
-    process_scan("7", str(tmp_path / "7.img.nii.gz"), str(tmp_path / "7.heart.nii.gz"), str(tmp_path), settings)
+    process_scan("7", str(tmp_path / "7.img.nii.gz"), str(tmp_path / "7.heart.nii.gz"), str(tmp_path))
     assert (tmp_path / "7_aortic.png").is_file()
     assert (tmp_path / "7_mitral.png").is_file()
+    assert Image.open(tmp_path / "7_mitral_long_axis_a.png").size == (100, 100)
     metadata = json.loads((tmp_path / "7_valves.json").read_text())
     assert set(metadata["valves"]) == {"aortic", "mitral"}
     assert metadata["channels"] == ["en_face", "long_axis_a", "long_axis_b"]
-    assert (tmp_path / "7_mitral_long_axis_a.png").is_file()
+    assert metadata["field_of_view_mm"] == 50.0
+    assert metadata["hu_window"] == pytest.approx([-200.0, 550.0])
 
 
-def test_orthogonal_long_axis_views_show_flow_upwards() -> None:
+def test_long_axis_views_show_flow_upwards() -> None:
     labels = _labels()
     ct = _image(np.where(labels == LEFT_ATRIUM_ID, 1000.0, -1000.0).astype(np.float32))
     plane = locate_valve(_image(labels), labels, VALVES[1])
-    image = sample_valve_image(ct, plane, SliceSettings(field_of_view_mm=10.0, resolution_mm=1.0))
-    for channel in (1, 2):
-        assert (image[:4, :, channel] == 0).all()
-        assert (image[-4:, :, channel] == 255).all()
+    views = valve_views(ct, plane, field_of_view_mm=10.0, resolution_mm=1.0)
+    for name in ("long_axis_a", "long_axis_b"):
+        assert (views[name][:4] == -1000.0).all()
+        assert (views[name][-4:] == 1000.0).all()
 
 
 def test_adaptive_window_maps_myocardium_and_blood_to_fixed_grey_levels() -> None:
     labels = np.array([MYOCARDIUM_ID, MYOCARDIUM_ID, LEFT_VENTRICLE_ID, AORTA_ID, 0])
     for myocardium, blood in ((100.0, 400.0), (165.0, 810.0)):
         volume = np.array([myocardium, myocardium, blood, blood, -1000.0])
-        settings = SliceSettings(*[0.0] * 3, *adaptive_window(volume, labels))
-        grey = window(np.array([myocardium, blood]), settings)
+        grey = window(np.array([myocardium, blood]), *adaptive_window(volume, labels))
         assert np.allclose(grey, [102, 204], atol=1)
 
 

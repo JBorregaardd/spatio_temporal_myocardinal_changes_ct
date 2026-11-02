@@ -14,22 +14,20 @@ direction of blood flow:
 3. **Centre** – mean of the contact voxels, weighted by `exp(-(d_up + d_down) / threshold)`.
 4. **Normal** – weighted PCA of the contact voxels; the axis of least variance, flipped so it points from the upstream
    to the downstream structure (centroids within 20 mm of the centre).
-5. **Sampling** – three 60 × 60 mm views at 0.5 mm resolution (120 × 120 px) through the valve centre, chosen with
-   `--views`:
-   - `orthogonal` (default): `en_face` (perpendicular to the normal, looking along the flow), `long_axis_a` (contains
-     the normal and the direction towards the other valve, so both valves are in view, similar to a three-chamber view)
-     and `long_axis_b` (contains the normal, perpendicular to `long_axis_a`). Blood flows towards the top of the
-     long-axis views. En-face shows the opening area; the long-axis views show the leaflets themselves (across the
-     annulus when closed, along the wall when open).
-   - `parallel`: en-face slices at −2, 0 and +2 mm along the normal (`--slab-offset-mm`).
-6. **Windowing** – HU clipped to a window and scaled to 0–255. With `--window adaptive` (default) the window is
-   `[myocardium − c, blood + c/2]`, where myocardium and blood are the scan's median HU in the myocardium and in LA/LV/aorta
-   and `c` is their difference, so myocardium and blood get the same grey level in every scan regardless of the amount
-   of contrast agent (ImageCAS blood pools range from ~400 to ~800 HU). `--window fixed` uses `--hu-min`/`--hu-max`
-   (default −200 to 600 HU). The window used is stored in the JSON file.
+5. **Sampling** – three orthogonal 50 × 50 mm views at 0.5 mm resolution (100 × 100 px) through the valve centre:
+   `en_face` (perpendicular to the normal, looking along the flow), `long_axis_a` (contains the normal and the direction
+   towards the other valve, so both valves are in view, similar to a three-chamber view) and `long_axis_b` (contains the
+   normal, perpendicular to `long_axis_a`). Blood flows towards the top of the long-axis views. En-face shows the
+   opening area; the long-axis views show the leaflets themselves (across the annulus when closed, along the wall when
+   open). Orthogonal views replaced three parallel en-face slices 2 mm apart, which showed nearly the same image three
+   times; the field of view was cut from 60 to 50 mm because the ImageCAS images held much irrelevant surrounding tissue.
+6. **Windowing** – HU clipped to a per-scan window `[myocardium − c, blood + c/2]` and scaled to 0–255, where
+   myocardium and blood are the scan's median HU in the myocardium and in LA/LV/aorta and `c` is their difference, so
+   myocardium and blood get the same grey level in every scan regardless of the amount of contrast agent (ImageCAS blood
+   pools range from ~400 to ~800 HU; a fixed −200 to 600 HU window turned all blood white in high-contrast scans).
 7. **Output** – per valve `<id>_<valve>.png` (the three views as R, G, B channels) and `<id>_<valve>_<view>.png` (each
-   view in grayscale), plus `<id>_valves.json` (centre, normal, in-plane axes, threshold used, settings and channel
-   order) and `valve_planes.log`.
+   view in grayscale), plus `<id>_valves.json` (centre, normal, in-plane axes, threshold used, field of view, HU window
+   and channel order) and `valve_planes.log`.
 8. **Batch** – every scan in the folder is processed; failures are logged and the run continues. Scans that already
    have a JSON file are skipped unless `--overwrite` is given.
 
@@ -44,8 +42,8 @@ uv run side_project/valve_planes/valve_planes.py <ct_folder> <seg_folder> <out_f
     --image-pattern "{id}.nii.gz" --segmentation-pattern "{id}/heartchambers_highres.nii.gz"
 ```
 
-See `--help` for field of view, resolution, slab offset and HU window. TotalSegmentator is not a project dependency;
-it must be on `PATH` (or passed with `--totalsegmentator`) only if segmentations are missing.
+The field of view and resolution are the constants `FIELD_OF_VIEW_MM` and `RESOLUTION_MM` in `valve_planes.py`.
+TotalSegmentator is not a project dependency; it must be on `PATH` (or passed with `--totalsegmentator`) only if segmentations are missing.
 
 ## CGPS end-diastolic / end-systolic dataset
 
@@ -92,7 +90,7 @@ both valves of a patient are labelled the page moves on to the next patient. Cli
 
 ## Feeding the views to a model
 
-In `orthogonal` mode the RGB channels are not spatially aligned (only the centre pixel is shared), which breaks the
+The RGB channels are not spatially aligned (only the centre pixel is shared), which breaks the
 assumption of a pretrained network that the three channels describe the same point. Options, roughly in order of
 preference:
 
@@ -104,5 +102,5 @@ preference:
 ## What to check
 
 Look through the images of the first scans: the valve should sit roughly in the centre and an open and a closed valve
-should be distinguishable by eye. If not, adjust `--field-of-view-mm`, the HU window (`--hu-min`, `--hu-max`) or the
-contact thresholds (`CONTACT_THRESHOLDS_MM`).
+should be distinguishable by eye. If not, adjust `FIELD_OF_VIEW_MM` or the contact thresholds
+(`CONTACT_THRESHOLDS_MM`) in `valve_planes.py`.

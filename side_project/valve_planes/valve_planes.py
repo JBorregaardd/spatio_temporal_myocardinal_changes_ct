@@ -1,9 +1,10 @@
-"""Extract en-face images of the aortic and mitral valves from cardiac CT.
+"""Extract images of the aortic and mitral valves from cardiac CT.
 
 For every scan the valve planes are located from the contact surfaces between TotalSegmentator
-``heartchambers_highres`` structures (LV/aorta for the aortic valve, LA/LV for the mitral valve). Three parallel
-slices perpendicular to each valve normal are sampled and stored as the RGB channels of a PNG, together with a JSON
-file holding the valve centre and normal so the crop can be reproduced.
+``heartchambers_highres`` structures (LV/aorta for the aortic valve, LA/LV for the mitral valve). Three orthogonal
+views through each valve centre (en face and two long-axis views) are sampled with a per-scan HU window and stored as
+grayscale PNGs and as the RGB channels of one PNG, together with a JSON file holding the valve centre and normal so
+the crop can be reproduced.
 
 Example:
     uv run side_project/valve_planes/valve_planes.py data/1_200 data/TotalSegmentator side_project/valve_planes/output
@@ -35,11 +36,9 @@ CONTACT_THRESHOLDS_MM = (1.5, 2.0, 3.0, 4.0, 5.0)
 MIN_CONTACT_VOXELS = 50
 LOCAL_RADIUS_MM = 20.0
 AIR_HU = -1024.0
-VIEW_NAMES = {
-    "orthogonal": ("en_face", "long_axis_a", "long_axis_b"),
-    "parallel": ("upstream", "valve", "downstream"),
-}
-WINDOW_MODES = ("adaptive", "fixed")
+FIELD_OF_VIEW_MM = 50.0
+RESOLUTION_MM = 0.5
+VIEW_NAMES = ("en_face", "long_axis_a", "long_axis_b")
 
 logger = logging.getLogger("valve_planes")
 
@@ -63,31 +62,6 @@ VALVES = (
     Valve("aortic", LEFT_VENTRICLE_ID, AORTA_ID),
     Valve("mitral", LEFT_ATRIUM_ID, LEFT_VENTRICLE_ID),
 )
-
-
-@dataclass(frozen=True)
-class SliceSettings:
-    """How the valve image is sampled and windowed.
-
-    Attributes:
-        field_of_view_mm: Side length of the square image in mm.
-        resolution_mm: Pixel size in mm.
-        slab_offset_mm: Distance of the outer slices from the valve plane in mm (``parallel`` views only).
-        hu_min: Lower bound of the HU window (replaced per scan in ``adaptive`` mode).
-        hu_max: Upper bound of the HU window (replaced per scan in ``adaptive`` mode).
-        views: ``"orthogonal"`` for an en-face view and two long-axis views through the valve centre, or
-            ``"parallel"`` for three en-face slices ``slab_offset_mm`` apart.
-        window: ``"adaptive"`` to derive the HU window from the scan's myocardium and blood pool (see
-            ``adaptive_window``), or ``"fixed"`` to use ``hu_min`` and ``hu_max`` as given.
-    """
-
-    field_of_view_mm: float = 60.0
-    resolution_mm: float = 0.5
-    slab_offset_mm: float = 2.0
-    hu_min: float = -200.0
-    hu_max: float = 600.0
-    views: str = "orthogonal"
-    window: str = "adaptive"
 
 
 @dataclass(frozen=True)
@@ -258,7 +232,12 @@ def _local_centroid(image: sitk.Image, labels: np.ndarray, label: int, center: n
 
 
 def sample_plane(
-    ct: sitk.Image, center: np.ndarray, column_axis: np.ndarray, up_axis: np.ndarray, settings: SliceSettings
+    ct: sitk.Image,
+    center: np.ndarray,
+    column_axis: np.ndarray,
+    up_axis: np.ndarray,
+    field_of_view_mm: float = FIELD_OF_VIEW_MM,
+    resolution_mm: float = RESOLUTION_MM,
 ) -> np.ndarray:
     """Sample a square HU image centred on ``center``, with columns along ``column_axis`` and ``up_axis`` pointing up.
 
@@ -267,13 +246,14 @@ def sample_plane(
         center: Physical image centre in mm.
         column_axis: Unit vector along increasing columns.
         up_axis: Unit vector towards the top row.
-        settings: Field of view and resolution.
+        field_of_view_mm: Side length of the square image in mm.
+        resolution_mm: Pixel size in mm.
 
     Returns:
         HU array of shape (rows, columns); points outside the scan are ``AIR_HU``.
     """
-    n_pixels = int(round(settings.field_of_view_mm / settings.resolution_mm))
-    axis = (np.arange(n_pixels) - (n_pixels - 1) / 2) * settings.resolution_mm
+    n_pixels = int(round(field_of_view_mm / resolution_mm))
+    axis = (np.arange(n_pixels) - (n_pixels - 1) / 2) * resolution_mm
     rows, cols = np.meshgrid(axis, axis, indexing="ij")
     points = (center + cols[..., None] * column_axis - rows[..., None] * up_axis).reshape(-1, 3)
     index_zyx = physical_to_index(ct, points)[:, ::-1].T
@@ -281,36 +261,30 @@ def sample_plane(
     return map_coordinates(volume, index_zyx, order=1, cval=AIR_HU).reshape(n_pixels, n_pixels)
 
 
-def valve_views(ct: sitk.Image, plane: ValvePlane, settings: SliceSettings) -> dict[str, np.ndarray]:
-    """Sample the three views of a valve in HU, named as in ``VIEW_NAMES``.
+def valve_views(
+    ct: sitk.Image, plane: ValvePlane, field_of_view_mm: float = FIELD_OF_VIEW_MM, resolution_mm: float = RESOLUTION_MM
+) -> dict[str, np.ndarray]:
+    """Sample the three orthogonal views of a valve in HU, named as in ``VIEW_NAMES``.
 
-    ``orthogonal``: ``en_face`` (looking along the flow), ``long_axis_a`` (spanned by ``in_plane_u`` and the normal) and
-    ``long_axis_b`` (spanned by ``in_plane_v`` and the normal); in the long-axis views blood flows towards the top.
-    ``parallel``: en-face slices ``slab_offset_mm`` upstream of, in and downstream of the valve plane.
+    ``en_face`` looks along the flow, ``long_axis_a`` is spanned by ``in_plane_u`` and the normal (through both valves
+    once oriented) and ``long_axis_b`` by ``in_plane_v`` and the normal; in the long-axis views blood flows towards the
+    top.
 
     Args:
         ct: CT image in HU.
         plane: Valve plane to sample.
-        settings: Sampling settings including the view mode.
+        field_of_view_mm: Side length of the square images in mm.
+        resolution_mm: Pixel size in mm.
 
     Returns:
         Mapping from view name to HU array, in channel order.
-
-    Raises:
-        ValueError: If ``settings.views`` is not a known view mode.
     """
-    if settings.views not in VIEW_NAMES:
-        raise ValueError(f"Unknown view mode '{settings.views}', expected one of {list(VIEW_NAMES)}")
     center, normal = np.asarray(plane.center_mm), np.asarray(plane.normal)
     u, v = np.asarray(plane.in_plane_u), np.asarray(plane.in_plane_v)
-    if settings.views == "orthogonal":
-        planes = [(center, u, v), (center, u, normal), (center, v, normal)]
-    else:
-        offset = settings.slab_offset_mm * normal
-        planes = [(center - offset, u, v), (center, u, v), (center + offset, u, v)]
+    axes = [(u, v), (u, normal), (v, normal)]
     return {
-        name: sample_plane(ct, origin, column_axis, up_axis, settings)
-        for name, (origin, column_axis, up_axis) in zip(VIEW_NAMES[settings.views], planes)
+        name: sample_plane(ct, center, column_axis, up_axis, field_of_view_mm, resolution_mm)
+        for name, (column_axis, up_axis) in zip(VIEW_NAMES, axes)
     }
 
 
@@ -319,7 +293,7 @@ def adaptive_window(volume: np.ndarray, labels: np.ndarray) -> tuple[float, floa
 
     With ``c`` the blood-myocardium contrast the window is ``[myocardium - c, blood + c / 2]``, so myocardium lands at
     40% and blood at 80% of the grey range regardless of the amount of contrast agent. For a typical scan (myocardium
-    ~100 HU, blood ~400 HU) this is close to the fixed window of -200 to 600 HU.
+    ~100 HU, blood ~400 HU) this is close to a window of -200 to 600 HU.
 
     Args:
         volume: CT array in HU, in the same grid as ``labels``.
@@ -339,19 +313,10 @@ def adaptive_window(volume: np.ndarray, labels: np.ndarray) -> tuple[float, floa
     return myocardium - contrast, blood + contrast / 2
 
 
-def window(hu: np.ndarray, settings: SliceSettings) -> np.ndarray:
-    """Clip HU values to the window in ``settings`` and scale them to uint8."""
-    scaled = (np.clip(hu, settings.hu_min, settings.hu_max) - settings.hu_min) / (settings.hu_max - settings.hu_min)
+def window(hu: np.ndarray, hu_min: float, hu_max: float) -> np.ndarray:
+    """Clip HU values to ``[hu_min, hu_max]`` and scale them to uint8."""
+    scaled = (np.clip(hu, hu_min, hu_max) - hu_min) / (hu_max - hu_min)
     return np.round(scaled * 255).astype(np.uint8)
-
-
-def sample_valve_image(ct: sitk.Image, plane: ValvePlane, settings: SliceSettings) -> np.ndarray:
-    """Sample the three views of a valve (see ``valve_views``) and stack them windowed as an 8-bit RGB image.
-
-    Returns:
-        Array of shape (rows, columns, 3) and dtype uint8.
-    """
-    return np.stack([window(hu, settings) for hu in valve_views(ct, plane, settings).values()], axis=-1)
 
 
 def run_totalsegmentator(image_path: str, segmentation_path: str, executable: str = "TotalSegmentator") -> None:
@@ -405,7 +370,6 @@ def process_scan(
     image_path: str,
     segmentation_path: str,
     output_folder: str,
-    settings: SliceSettings,
     totalsegmentator: str = "TotalSegmentator",
 ) -> list[ValvePlane]:
     """Segment (if needed), locate both valves and save their images and metadata for one scan.
@@ -425,15 +389,13 @@ def process_scan(
     if segmentation.GetSize() != ct.GetSize():
         segmentation = sitk.Resample(segmentation, ct, sitk.Transform(), sitk.sitkNearestNeighbor, 0)
     labels = sitk.GetArrayFromImage(segmentation)
-    if settings.window == "adaptive":
-        hu_min, hu_max = adaptive_window(sitk.GetArrayViewFromImage(ct), labels)
-        settings = replace(settings, hu_min=hu_min, hu_max=hu_max)
+    hu_min, hu_max = adaptive_window(sitk.GetArrayViewFromImage(ct), labels)
 
     os.makedirs(output_folder, exist_ok=True)
     aortic, mitral = (locate_valve(segmentation, labels, valve) for valve in VALVES)
     planes = [orient_towards(aortic, mitral.center_mm), orient_towards(mitral, aortic.center_mm)]
     for plane in planes:
-        views = {name: window(hu, settings) for name, hu in valve_views(ct, plane, settings).items()}
+        views = {name: window(hu, hu_min, hu_max) for name, hu in valve_views(ct, plane).items()}
         prefix = os.path.join(output_folder, f"{patient_id}_{plane.valve}")
         Image.fromarray(np.stack(list(views.values()), axis=-1)).save(f"{prefix}.png")
         for name, view in views.items():
@@ -443,8 +405,10 @@ def process_scan(
         "patient_id": patient_id,
         "image": os.path.abspath(image_path),
         "segmentation": os.path.abspath(segmentation_path),
-        "settings": asdict(settings),
-        "channels": list(VIEW_NAMES[settings.views]),
+        "field_of_view_mm": FIELD_OF_VIEW_MM,
+        "resolution_mm": RESOLUTION_MM,
+        "hu_window": [hu_min, hu_max],
+        "channels": list(VIEW_NAMES),
         "valves": {plane.valve: asdict(plane) for plane in planes},
     }
     with open(os.path.join(output_folder, f"{patient_id}_valves.json"), "w") as file:
@@ -458,15 +422,6 @@ def main(
     output_folder: str = typer.Argument(..., help="Folder the PNGs, JSON files and log are written to."),
     image_pattern: str = typer.Option("{id}.img.nii.gz", help="CT file name pattern; {id} marks the patient id."),
     segmentation_pattern: str = typer.Option("{id}.heart.nii.gz", help="Segmentation file name pattern."),
-    field_of_view_mm: float = typer.Option(60.0, help="Side length of the valve image in mm."),
-    resolution_mm: float = typer.Option(0.5, help="Pixel size in mm."),
-    views: str = typer.Option("orthogonal", help="View mode: 'orthogonal' (en-face + two long-axis) or 'parallel'."),
-    slab_offset_mm: float = typer.Option(2.0, help="Distance of the outer slices in 'parallel' mode in mm."),
-    window_mode: str = typer.Option(
-        "adaptive", "--window", help="HU window: 'adaptive' (per scan from myocardium/blood) or 'fixed'."
-    ),
-    hu_min: float = typer.Option(-200.0, help="Lower bound of the HU window with --window fixed."),
-    hu_max: float = typer.Option(600.0, help="Upper bound of the HU window with --window fixed."),
     totalsegmentator: str = typer.Option("TotalSegmentator", help="TotalSegmentator executable."),
     overwrite: bool = typer.Option(False, help="Reprocess scans that already have a metadata file."),
     limit: int = typer.Option(0, help="Only process the first N scans (0 processes all)."),
@@ -478,11 +433,6 @@ def main(
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.StreamHandler(), logging.FileHandler(os.path.join(output_folder, "valve_planes.log"))],
     )
-    if views not in VIEW_NAMES:
-        raise typer.BadParameter(f"--views must be one of {list(VIEW_NAMES)}")
-    if window_mode not in WINDOW_MODES:
-        raise typer.BadParameter(f"--window must be one of {list(WINDOW_MODES)}")
-    settings = SliceSettings(field_of_view_mm, resolution_mm, slab_offset_mm, hu_min, hu_max, views, window_mode)
     scans = find_scans(image_folder, image_pattern)
     if limit > 0:
         scans = dict(list(scans.items())[:limit])
@@ -495,7 +445,7 @@ def main(
             continue
         segmentation_path = resolve_segmentation(segmentation_folder, segmentation_pattern, patient_id)
         try:
-            planes = process_scan(patient_id, image_path, segmentation_path, output_folder, settings, totalsegmentator)
+            planes = process_scan(patient_id, image_path, segmentation_path, output_folder, totalsegmentator)
             summary = ", ".join(f"{p.valve} {p.n_contact_voxels} vox @ {p.contact_threshold_mm} mm" for p in planes)
             logger.info(f"{patient_id}: done ({summary})")
         except Exception as error:
