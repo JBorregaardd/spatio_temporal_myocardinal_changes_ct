@@ -56,10 +56,15 @@ independently (`--seed`, default 42), so a patient can be in one or both phases,
 `<output>/ES/<id>.nii.gz`, with `dataset.csv` (`patient_id,phase,path,source_path`). The default output is
 `/data/Data/JERI/data/CGPS10_ED_ES`.
 
+`fetch_phase_segmentations.py` then copies (or with `--symlink`, links) the matching TotalSegmentator segmentations
+from `/storage/Data/AortaExplorer/DTU-CGPS-10y-august-2026/Cardiac_<phase>_CE/<scan>/segmentations/heartchambers_highres.nii.gz`
+to `<output>/segmentations/<phase>/<id>.heart.nii.gz`; scans without one are listed in `segmentations/missing.csv`.
+
 ```bash
 uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100
+uv run side_project/valve_planes/fetch_phase_segmentations.py
 uv run side_project/valve_planes/valve_planes.py /data/Data/JERI/data/CGPS10_ED_ES/ED \
-    /data/Data/JERI/data/CGPS10_ED_ES/ED/segmentations /data/Data/JERI/data/CGPS10_ED_ES/valve_planes/ED \
+    /data/Data/JERI/data/CGPS10_ED_ES/segmentations/ED /data/Data/JERI/data/CGPS10_ED_ES/valve_planes/ED \
     --image-pattern "{id}.nii.gz"
 ```
 
