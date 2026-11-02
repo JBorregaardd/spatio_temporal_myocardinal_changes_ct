@@ -60,12 +60,19 @@ independently (`--seed`, default 42), so a patient can be in one or both phases,
 from `/storage/Data/AortaExplorer/DTU-CGPS-10y-august-2026/Cardiac_<phase>_CE/<scan>/segmentations/heartchambers_highres.nii.gz`
 to `<output>/segmentations/<phase>/<id>.heart.nii.gz`; scans without one are listed in `segmentations/missing.csv`.
 
+To label the valves without knowing the phase, `blind_phase_dataset.py` shuffles the ED and ES scans together and
+symlinks them under phase-free scan ids (`S001`, `S002`, ...) to `<output>/blinded/images/<scan_id>.nii.gz` and
+`<output>/blinded/segmentations/<scan_id>.heart.nii.gz`. The key (`scan_id,patient_id,phase`) is written to
+`<output>/blinded_key.csv`, outside the labelled folder; do not open it until labelling is done.
+
 ```bash
+D=/data/Data/JERI/data/CGPS10_ED_ES
 uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100
 uv run side_project/valve_planes/fetch_phase_segmentations.py
-uv run side_project/valve_planes/valve_planes.py /data/Data/JERI/data/CGPS10_ED_ES/ED \
-    /data/Data/JERI/data/CGPS10_ED_ES/segmentations/ED /data/Data/JERI/data/CGPS10_ED_ES/valve_planes/ED \
+uv run side_project/valve_planes/blind_phase_dataset.py
+uv run side_project/valve_planes/valve_planes.py $D/blinded/images $D/blinded/segmentations $D/valve_planes \
     --image-pattern "{id}.nii.gz"
+uv run side_project/valve_planes/label_valves.py $D/valve_planes
 ```
 
 Some patients can appear in both phases, so split train and test sets by patient, not by scan.
