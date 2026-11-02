@@ -1,0 +1,15 @@
+
+#example of how to paths are stored in /storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_cardiac_ES_CE_fullpath.txt
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0000_SERIES0013_volume_0.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0002_SERIES0013_volume_0.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0003_SERIES0013_volume_0.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0004_SERIES0013_volume_0.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0005_SERIES0012_volume_0.nii.gz
+
+
+#example of how the paths are stored in /storage/Data/DTU-CGPS-10y-august-2026/Filelists/DTU-CGPS-10y-august-2026_all_cardiac_ED_CE_fullpath.txt
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0000_SERIES0013_volume_1.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0001_SERIES0013_volume_1.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0002_SERIES0013_volume_1.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0003_SERIES0013_volume_1.nii.gz
+/storage/Data/DTU-CGPS-10y-august-2026/NIFTI/CGPS-10y-august-2026_0004_SERIES0013_volume_1.nii.gz
