@@ -47,6 +47,24 @@ uv run side_project/valve_planes/valve_planes.py <ct_folder> <seg_folder> <out_f
 See `--help` for field of view, resolution, slab offset and HU window. TotalSegmentator is not a project dependency;
 it must be on `PATH` (or passed with `--totalsegmentator`) only if segmentations are missing.
 
+## CGPS end-diastolic / end-systolic dataset
+
+`make_phase_dataset.py` builds a balanced dataset from the CGPS 10-year file lists in
+`/storage/Data/DTU-CGPS-10y-august-2026/Filelists` (`..._ED_CE_fullpath.txt`: `volume_1`, end-diastolic;
+`..._ES_CE_fullpath.txt`: `volume_0`, end-systolic). It draws `--n-patients` random patients (`--seed`, default 42)
+that are in both lists and symlinks (or with `--copy`, copies) their scans to `<output>/ED/<id>.nii.gz` and
+`<output>/ES/<id>.nii.gz`, with `dataset.csv` (`patient_id,phase,path,source_path`). The default output is
+`/data/Data/JERI/data/CGPS10_ED_ES`.
+
+```bash
+uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100
+uv run side_project/valve_planes/valve_planes.py /data/Data/JERI/data/CGPS10_ED_ES/ED \
+    /data/Data/JERI/data/CGPS10_ED_ES/ED/segmentations /data/Data/JERI/data/CGPS10_ED_ES/valve_planes/ED \
+    --image-pattern "{id}.nii.gz"
+```
+
+Every patient appears in both phases, so split train and test sets by patient, not by scan.
+
 ## Labelling
 
 `label_valves.py` serves a local page that shows the three views of both valves per patient and writes each label
