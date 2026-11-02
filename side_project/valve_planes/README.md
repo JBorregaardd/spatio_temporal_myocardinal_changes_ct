@@ -51,8 +51,8 @@ it must be on `PATH` (or passed with `--totalsegmentator`) only if segmentations
 
 `make_phase_dataset.py` builds a balanced dataset from the CGPS 10-year file lists in
 `/storage/Data/DTU-CGPS-10y-august-2026/Filelists` (`..._ED_CE_fullpath.txt`: `volume_1`, end-diastolic;
-`..._ES_CE_fullpath.txt`: `volume_0`, end-systolic). It draws `--n-patients` random patients (`--seed`, default 42)
-that are in both lists and symlinks (or with `--copy`, copies) their scans to `<output>/ED/<id>.nii.gz` and
+`..._ES_CE_fullpath.txt`: `volume_0`, end-systolic). It draws `--n-patients` random patients from each list
+independently (`--seed`, default 42), so a patient can be in one or both phases, and symlinks (or with `--copy`, copies) their scans to `<output>/ED/<id>.nii.gz` and
 `<output>/ES/<id>.nii.gz`, with `dataset.csv` (`patient_id,phase,path,source_path`). The default output is
 `/data/Data/JERI/data/CGPS10_ED_ES`.
 
@@ -63,7 +63,7 @@ uv run side_project/valve_planes/valve_planes.py /data/Data/JERI/data/CGPS10_ED_
     --image-pattern "{id}.nii.gz"
 ```
 
-Every patient appears in both phases, so split train and test sets by patient, not by scan.
+Some patients can appear in both phases, so split train and test sets by patient, not by scan.
 
 ## Labelling
 
