@@ -4,7 +4,7 @@ Serves the per-view PNGs in the output folder and writes every label straight to
 (``patient_id,aortic,mitral,updated``), so labelling can be stopped and resumed at any time.
 
 Example:
-    uv run side_project/valve_planes/label_valves.py side_project/valve_planes/output
+    uv run side_project/valve_planes/label_valves.py /data/Data/JERI/data/CGPS10_ED_ES/valve_planes/
     # then open http://localhost:8765 in a browser
 """
 from __future__ import annotations
