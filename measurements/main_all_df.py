@@ -25,7 +25,8 @@ SEX_CODES = {"male": 0, "female": 1}
 SEX_CHOICES = ["all", *SEX_CODES]
 ROW_LABELS = {
     "age": "Age (years)",
-    "lv_blood_pool_volume_ml": "Volume (mL)",
+    "lvm_volume_ml": "LV myocardial volume (mL)",
+    "lv_blood_pool_volume_ml": "LV blood pool volume (mL)",
     "lvm_g": "Mass (g)",
     "LVDVI": "LVDVI (mL/m^2)",
     "Sphericity_index": "Volumetric sphericity index",
