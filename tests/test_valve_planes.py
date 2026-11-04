@@ -22,6 +22,7 @@ from valve_planes import (  # noqa: E402
     locate_valve,
     orient_towards,
     process_scan,
+    sample_plane,
     valve_views,
     window,
 )
@@ -97,6 +98,21 @@ def test_long_axis_views_show_flow_upwards() -> None:
     for name in ("long_axis_a", "long_axis_b"):
         assert (views[name][:4] == -1000.0).all()
         assert (views[name][-4:] == 1000.0).all()
+
+
+def test_slab_lowers_noise_and_keeps_a_sheet_running_through_it() -> None:
+    noise = np.random.default_rng(0).normal(400.0, 100.0, (60, 60, 60)).astype(np.float32)
+    noise[:, :, 29:32] = -100.0
+    ct = sitk.GetImageFromArray(noise)
+    ct.SetSpacing((0.5, 0.5, 0.5))
+    center = np.array([15.0, 15.0, 15.0])
+    x, y = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+
+    single = sample_plane(ct, center, x, y, field_of_view_mm=20.0, slab_mm=0.0)
+    slab = sample_plane(ct, center, x, y, field_of_view_mm=20.0, slab_mm=3.0)
+    background = np.r_[0:15, 25:40]
+    assert slab[:, background].std() < 0.5 * single[:, background].std()
+    assert slab[:, 19:21].mean() < 100.0
 
 
 def test_adaptive_window_maps_myocardium_and_blood_to_fixed_grey_levels() -> None:
