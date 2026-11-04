@@ -18,6 +18,7 @@ classifiers = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "blosc2>=4.14.1",
     "edt>=3.1.2",
     "fastapi==0.115.6",
     "pandas>=3.0.5",
