@@ -24,14 +24,16 @@ def load_thickness(patient_dir: str) -> dict[int, np.ndarray]:
 
 
 def thickness_per_segment(patient_dir: str) -> dict[str, float]:
-    """Median, mean and standard deviation of the wall thickness in each AHA segment of one patient.
+    """Median, mean, maximum and standard deviation of the wall thickness in each AHA segment of one patient.
 
+    The maximum is the largest single measurement in the segment, as used for MadWT and SLR.
 
     Args:
         patient_dir: The patient's output folder from the LVM thickness pipeline.
 
     Returns:
-        ``segment_<n>_median_mm``, ``segment_<n>_mean_mm`` and ``segment_<n>_std_mm`` for segments 1-17.
+        ``segment_<n>_median_mm``, ``segment_<n>_mean_mm``, ``segment_<n>_max_mm`` and ``segment_<n>_std_mm`` for
+        segments 1-17.
     """
     thickness = load_thickness(patient_dir)
 
@@ -41,6 +43,7 @@ def thickness_per_segment(patient_dir: str) -> dict[str, float]:
         has_values = len(values) > 0
         result[f"segment_{segment}_median_mm"] = float(np.median(values)) if has_values else np.nan
         result[f"segment_{segment}_mean_mm"] = float(np.mean(values)) if has_values else np.nan
+        result[f"segment_{segment}_max_mm"] = float(np.max(values)) if has_values else np.nan
         result[f"segment_{segment}_std_mm"] = float(np.std(values)) if has_values else np.nan
     return result
 

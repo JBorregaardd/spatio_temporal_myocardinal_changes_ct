@@ -16,10 +16,12 @@ def test_thickness_per_segment(tmp_path: Path) -> None:
     result = thickness_per_segment(str(tmp_path))
     assert result["segment_1_median_mm"] == pytest.approx(9.0)
     assert result["segment_1_mean_mm"] == pytest.approx(10.0)
+    assert result["segment_1_max_mm"] == pytest.approx(13.0)
     assert result["segment_1_std_mm"] == pytest.approx(np.std([8.0, 9.0, 13.0]))
     assert result["segment_17_median_mm"] == pytest.approx(5.0)
     assert np.isnan(result["segment_2_median_mm"])
-    assert len(result) == 17 * 3
+    assert np.isnan(result["segment_2_max_mm"])
+    assert len(result) == 17 * 4
 
 
 def test_madwt(tmp_path: Path) -> None:

@@ -51,6 +51,7 @@ PATIENT_METRICS = [
     "lv_blood_pool_volume_ml",
     "Sphericity_index",
 ]
+THICKNESS_MEASURES = {"median_thickness": "Median", "max_thickness": "Maximum"}
 GROUPS = {"All": None, "Kept": False, "Excluded": True}
 GROUP_COLORS = {"All": "#7a7974", "Kept": "#2a78d6", "Excluded": "#eb6834"}
 INK_COLOR = "#3d3d3a"
@@ -82,17 +83,18 @@ def compare_groups(table: pd.DataFrame, value: str) -> dict[str, float]:
     return row
 
 
-def segment_comparison(segments: pd.DataFrame) -> pd.DataFrame:
-    """Compare the median thickness per AHA segment between the groups.
+def segment_comparison(segments: pd.DataFrame, value: str) -> pd.DataFrame:
+    """Compare a thickness measure per AHA segment between the groups.
 
     Args:
         segments: Per-segment statistics with a boolean ``excluded`` column.
+        value: Thickness column to compare, e.g. ``median_thickness``.
 
     Returns:
         One row per segment.
     """
     rows = [
-        {"segment": segment, "septal": segment in SEPTAL_SEGMENTS, **compare_groups(group, "median_thickness")}
+        {"segment": segment, "septal": segment in SEPTAL_SEGMENTS, **compare_groups(group, value)}
         for segment, group in segments.groupby("segment")
     ]
     return pd.DataFrame(rows)
@@ -110,11 +112,12 @@ def patient_comparison(patients: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([{"metric": metric, **compare_groups(patients, metric)} for metric in PATIENT_METRICS])
 
 
-def plot_segments(comparison: pd.DataFrame, title: str, out_path: str) -> None:
-    """Mean median thickness ± one standard deviation per segment for all, kept and excluded scans.
+def plot_segments(comparison: pd.DataFrame, measure: str, title: str, out_path: str) -> None:
+    """Mean thickness ± one standard deviation per segment for all, kept and excluded scans.
 
     Args:
         comparison: Table from ``segment_comparison``.
+        measure: Name of the thickness measure for the y-axis label, e.g. ``"Maximum"``.
         title: Figure title.
         out_path: Path of the saved figure.
     """
@@ -136,7 +139,7 @@ def plot_segments(comparison: pd.DataFrame, title: str, out_path: str) -> None:
         ax.text(row["segment"], top + 0.3, "*", ha="center", color=INK_COLOR, fontsize=14)
 
     ax.set_xticks(x, [f"{s}\nseptum" if s in SEPTAL_SEGMENTS else str(s) for s in x])
-    ax.set(xlabel="AHA segment", ylabel="Median wall thickness (mm), mean ± SD", title=title)
+    ax.set(xlabel="AHA segment", ylabel=f"{measure} wall thickness (mm), mean ± SD", title=title)
     ax.grid(axis="y", color=GRID_COLOR, linewidth=0.8)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
@@ -188,28 +191,36 @@ def main() -> None:
         print(f"[WARN] {len(missing)} patients have no quality check and are left out: {', '.join(missing)}")
     segments = segments.merge(exclusion, on="patient_id")
     patients = patients.merge(exclusion, on="patient_id")
+    if "max_thickness" not in segments.columns:
+        raise SystemExit("[ERROR] The statistics table has no max_thickness; rerun measurements/main_statistics_df.py.")
 
     n_excluded = int(patients["excluded"].sum())
     print(f"{args.dataset}, aorta exclusion {args.aorta_exclusion_mm:g} mm: {len(patients)} patients, "
           f"{len(patients) - n_excluded} kept, {n_excluded} excluded")
 
+    name = f"{args.dataset}_{args.aorta_exclusion_mm:g}mm"
     columns = ["mean_all", "mean_kept", "mean_excluded", "difference_kept_minus_excluded", "p_value"]
-    segment_table = segment_comparison(segments)
-    print("\nMedian thickness per segment (mm):")
-    print(segment_table.set_index("segment")[["septal", *columns]].round(3).to_string())
+    saved = []
+    for value, measure in THICKNESS_MEASURES.items():
+        segment_table = segment_comparison(segments, value)
+        print(f"\n{measure} thickness per segment (mm):")
+        print(segment_table.set_index("segment")[["septal", *columns]].round(3).to_string())
+
+        segment_path = os.path.join(table_dir, f"{name}_{value}_per_segment_by_quality.csv")
+        figure_path = os.path.join(figure_dir, f"{name}_{value}_by_quality.png")
+        segment_table.to_csv(segment_path, index=False)
+        plot_segments(segment_table, measure,
+                      f"{measure} wall thickness per segment, {name}: all vs kept vs excluded scans", figure_path)
+        saved += [segment_path, figure_path]
 
     patient_table = patient_comparison(patients)
     print("\nPatient-level metrics:")
     print(patient_table.set_index("metric")[columns].round(3).to_string())
-
-    name = f"{args.dataset}_{args.aorta_exclusion_mm:g}mm"
-    segment_path = os.path.join(table_dir, f"{name}_thickness_per_segment_by_quality.csv")
     patient_path = os.path.join(table_dir, f"{name}_patient_summary_by_quality.csv")
-    figure_path = os.path.join(figure_dir, f"{name}_thickness_by_quality.png")
-    segment_table.to_csv(segment_path, index=False)
     patient_table.to_csv(patient_path, index=False)
-    plot_segments(segment_table, f"Wall thickness per segment, {name}: all vs kept vs excluded scans", figure_path)
-    print(f"\nTables:\n  {segment_path}\n  {patient_path}\nFigure: {figure_path}")
+    saved.append(patient_path)
+
+    print("\nSaved:\n  " + "\n  ".join(saved))
 
 
 if __name__ == "__main__":
