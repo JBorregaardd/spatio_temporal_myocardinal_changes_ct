@@ -104,6 +104,9 @@ preference:
 2. **Montage** – place the three views side by side in one image.
 3. **RGB stack** – the `<id>_<valve>.png` files; a simple baseline.
 
+The classifier is not trained on these views but on 3D crops around the valve (`export_crops.py`); see
+[REMOTE_TRAINING.md](REMOTE_TRAINING.md) for the export, the train/validation/test split and the GloViTa training.
+
 ## What to check
 
 Look through the images of the first scans: the valve should sit roughly in the centre and an open and a closed valve
