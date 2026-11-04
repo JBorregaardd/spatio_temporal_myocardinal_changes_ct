@@ -38,6 +38,7 @@ LOCAL_RADIUS_MM = 20.0
 AIR_HU = -1024.0
 FIELD_OF_VIEW_MM = 50.0
 RESOLUTION_MM = 0.5
+SLAB_MM = 3.0
 VIEW_NAMES = ("en_face", "long_axis_a", "long_axis_b")
 
 logger = logging.getLogger("valve_planes")
@@ -238,8 +239,12 @@ def sample_plane(
     up_axis: np.ndarray,
     field_of_view_mm: float = FIELD_OF_VIEW_MM,
     resolution_mm: float = RESOLUTION_MM,
+    slab_mm: float = 0.0,
 ) -> np.ndarray:
     """Sample a square HU image centred on ``center``, with columns along ``column_axis`` and ``up_axis`` pointing up.
+
+    With ``slab_mm`` > 0 the image is the mean of parallel slices ``resolution_mm`` apart spanning ``slab_mm`` across
+    the plane, which lowers the noise by about the square root of the number of slices.
 
     Args:
         ct: CT image in HU.
@@ -247,34 +252,46 @@ def sample_plane(
         column_axis: Unit vector along increasing columns.
         up_axis: Unit vector towards the top row.
         field_of_view_mm: Side length of the square image in mm.
-        resolution_mm: Pixel size in mm.
+        resolution_mm: Pixel size in mm, also the spacing of the slab slices.
+        slab_mm: Thickness of the averaged slab in mm; 0 samples a single slice.
 
     Returns:
         HU array of shape (rows, columns); points outside the scan are ``AIR_HU``.
     """
     n_pixels = int(round(field_of_view_mm / resolution_mm))
     axis = (np.arange(n_pixels) - (n_pixels - 1) / 2) * resolution_mm
+    n_slices = int(round(slab_mm / resolution_mm)) + 1
+    depth = (np.arange(n_slices) - (n_slices - 1) / 2) * resolution_mm
+    across = np.cross(column_axis, up_axis)
     rows, cols = np.meshgrid(axis, axis, indexing="ij")
-    points = (center + cols[..., None] * column_axis - rows[..., None] * up_axis).reshape(-1, 3)
+    in_plane = center + cols[..., None] * column_axis - rows[..., None] * up_axis
+    points = (in_plane[None] + depth[:, None, None, None] * across).reshape(-1, 3)
     index_zyx = physical_to_index(ct, points)[:, ::-1].T
     volume = sitk.GetArrayViewFromImage(ct)
-    return map_coordinates(volume, index_zyx, order=1, cval=AIR_HU).reshape(n_pixels, n_pixels)
+    samples = map_coordinates(volume, index_zyx, order=1, cval=AIR_HU).reshape(n_slices, n_pixels, n_pixels)
+    return samples.mean(axis=0)
 
 
 def valve_views(
-    ct: sitk.Image, plane: ValvePlane, field_of_view_mm: float = FIELD_OF_VIEW_MM, resolution_mm: float = RESOLUTION_MM
+    ct: sitk.Image,
+    plane: ValvePlane,
+    field_of_view_mm: float = FIELD_OF_VIEW_MM,
+    resolution_mm: float = RESOLUTION_MM,
+    slab_mm: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """Sample the three orthogonal views of a valve in HU, named as in ``VIEW_NAMES``.
 
     ``en_face`` looks along the flow, ``long_axis_a`` is spanned by ``in_plane_u`` and the normal (through both valves
     once oriented) and ``long_axis_b`` by ``in_plane_v`` and the normal; in the long-axis views blood flows towards the
-    top.
+    top. Only the long-axis views are averaged over a slab: the leaflets run through their slab and stay sharp, while
+    in the en-face view the leaflets lie obliquely to the plane and the coaptation lines blur away.
 
     Args:
         ct: CT image in HU.
         plane: Valve plane to sample.
         field_of_view_mm: Side length of the square images in mm.
         resolution_mm: Pixel size in mm.
+        slab_mm: Thickness of the slab averaged across the long-axis views in mm (see ``sample_plane``).
 
     Returns:
         Mapping from view name to HU array, in channel order.
@@ -283,7 +300,9 @@ def valve_views(
     u, v = np.asarray(plane.in_plane_u), np.asarray(plane.in_plane_v)
     axes = [(u, v), (u, normal), (v, normal)]
     return {
-        name: sample_plane(ct, center, column_axis, up_axis, field_of_view_mm, resolution_mm)
+        name: sample_plane(
+            ct, center, column_axis, up_axis, field_of_view_mm, resolution_mm, 0.0 if name == "en_face" else slab_mm
+        )
         for name, (column_axis, up_axis) in zip(VIEW_NAMES, axes)
     }
 
@@ -395,7 +414,10 @@ def process_scan(
     aortic, mitral = (locate_valve(segmentation, labels, valve) for valve in VALVES)
     planes = [orient_towards(aortic, mitral.center_mm), orient_towards(mitral, aortic.center_mm)]
     for plane in planes:
-        views = {name: window(hu, hu_min, hu_max) for name, hu in valve_views(ct, plane).items()}
+        views = {
+            name: window(hu, hu_min, hu_max)
+            for name, hu in valve_views(ct, plane, FIELD_OF_VIEW_MM, RESOLUTION_MM, SLAB_MM).items()
+        }
         prefix = os.path.join(output_folder, f"{patient_id}_{plane.valve}")
         Image.fromarray(np.stack(list(views.values()), axis=-1)).save(f"{prefix}.png")
         for name, view in views.items():
@@ -407,6 +429,7 @@ def process_scan(
         "segmentation": os.path.abspath(segmentation_path),
         "field_of_view_mm": FIELD_OF_VIEW_MM,
         "resolution_mm": RESOLUTION_MM,
+        "slab_mm": SLAB_MM,
         "hu_window": [hu_min, hu_max],
         "channels": list(VIEW_NAMES),
         "valves": {plane.valve: asdict(plane) for plane in planes},

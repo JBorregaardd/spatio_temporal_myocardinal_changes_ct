@@ -21,6 +21,11 @@ direction of blood flow:
    opening area; the long-axis views show the leaflets themselves (across the annulus when closed, along the wall when
    open). Orthogonal views replaced three parallel en-face slices 2 mm apart, which showed nearly the same image three
    times; the field of view was cut from 60 to 50 mm because the ImageCAS images held much irrelevant surrounding tissue.
+   The two long-axis views are the mean of a `SLAB_MM` = 3 mm slab across the plane (slices 0.5 mm apart), which
+   lowers the noise of grainy low-dose scans by roughly √7. On the noisiest ImageCAS scans this made the leaflet lines
+   in the long-axis views cleaner and more continuous, while a 5 mm slab started to blur them. The en-face view stays a
+   single slice: there the leaflets lie obliquely to the plane, and with a slab the aortic coaptation lines faded.
+   Set `SLAB_MM = 0` for single slices everywhere.
 6. **Windowing** – HU clipped to a per-scan window `[myocardium − c, blood + c/2]` and scaled to 0–255, where
    myocardium and blood are the scan's median HU in the myocardium and in LA/LV/aorta and `c` is their difference, so
    myocardium and blood get the same grey level in every scan regardless of the amount of contrast agent (ImageCAS blood
