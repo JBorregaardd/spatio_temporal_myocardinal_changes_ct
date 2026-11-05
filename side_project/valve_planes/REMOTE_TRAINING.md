@@ -152,12 +152,11 @@ Check that everything runs before starting a long job:
 
 ```bash
 cd $GLOVITA
-uv run --no-sync glovita_train \
+uv run --no-sync python $REPO/side_project/valve_planes/train_glovita.py \
     --task.metrics f1 balanced_acc auroc \
     --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
     --dataloading.batch_size 2 --dataloading.num_workers 4 \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
-    --data.augmentation.train_kwargs '{"mirror_axes": [0, 1]}' \
+    data:generic3d_dataset_config --data.data_root_dir $D/crops/mitral \
     model.encoder:nnfoundation_encoder_config \
     --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
     --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
@@ -165,8 +164,10 @@ uv run --no-sync glovita_train \
     logger:no_logger_config
 ```
 
-Check in `experiments/generic_3d_dataset/<run>/0/resolved_config.json` that `mirror_axes` is `[0, 1]`. If `train_kwargs` is rejected or ignored, leave the line out and tell me; that option was not tested locally
-(PowerShell could not pass the JSON).
+`train_glovita.py` takes exactly the `glovita_train` arguments and only adds `mirror_axes = [0, 1]` (see below).
+`glovita_train` itself cannot set this: `--data.augmentation.train_kwargs` does not exist on its command line, because
+the field defaults to an empty dict and the CLI library only creates options for keys that already exist. Check in
+`experiments/generic_3d_dataset/<run>/0/resolved_config.json` that `train_kwargs` is `{"mirror_axes": [0, 1]}`.
 
 While it runs, check the memory use in a second terminal with `nvidia-smi`. If it is far below 32 GB, the batch size
 can be raised in step 5.
@@ -183,14 +184,13 @@ blurs the open/closed difference, so axis 2 is not mirrored.
 ```bash
 cd $GLOVITA
 VALVE=mitral
-nohup uv run --no-sync glovita_train \
+nohup uv run --no-sync python $REPO/side_project/valve_planes/train_glovita.py \
     --task.metrics f1 balanced_acc auroc \
     --optimizer.name AdamW --optimizer.lr 1e-4 --optimizer.weight_decay 0.01 --optimizer.warmup_epochs 5 \
     --training.epochs 100 --training.precision bf16 --training.seed 42 \
     --training.best_checkpoint_metric val_AUROC \
     --dataloading.batch_size 2 --dataloading.num_workers 8 \
     data:generic3d_dataset_config --data.data_root_dir $D/crops/$VALVE \
-    --data.augmentation.train_kwargs '{"mirror_axes": [0, 1]}' \
     model.encoder:nnfoundation_encoder_config \
     --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
     --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
