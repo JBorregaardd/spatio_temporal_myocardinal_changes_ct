@@ -222,11 +222,14 @@ Only once the settings are final (no more changes based on test results):
 cd ~/image_classification
 RUN=experiments/generic_3d_dataset/<run folder>
 uv run --no-sync glovita_infer --exp_dir $RUN --checkpoint best \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
-    --metrics f1 balanced_acc auroc
+    --metrics f1 balanced_acc auroc --pred_output $RUN/test_predictions.pt \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE
 ```
 
-Check the arguments with `glovita_infer --help`; `infer` uses the `test` entry of `splits.json` automatically.
+- `glovita_infer`'s own options (`--metrics`, `--checkpoint`, `--pred_output`) must come **before**
+  `data:generic3d_dataset_config`; options after a subcommand are applied to that subcommand.
+- `infer` uses the `test` entry of `splits.json` automatically.
+- `--pred_output` saves the per-scan predictions, probabilities and case ids, to look up the misclassified scans.
 
 ## What to watch out for
 
