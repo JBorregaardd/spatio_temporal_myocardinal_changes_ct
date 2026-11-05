@@ -31,7 +31,14 @@ CGPS CT + TotalSegmentator ──valve_planes.py──► <id>_valves.json (valv
 | This repo | `~/spatio_temporal_myocardinal_changes_ct` |
 | GloViTa clone | `~/image_classification` |
 
-The commands below use these paths directly.
+The setup commands (steps 1–3) use these paths directly. Training and testing (steps 4–6) go through `valve.py`, which
+reads the data and GloViTa paths from the repo-root `.env`. Add these two lines to
+`~/spatio_temporal_myocardinal_changes_ct/.env` once (see `.env.example`):
+
+```bash
+VALVE_DATA_DIR=/data/Data/JERI/data/CGPS10_ED_ES
+GLOVITA_DIR=~/image_classification
+```
 
 ## Step 1: Update this repo
 
@@ -39,10 +46,11 @@ The commands below use these paths directly.
 cd ~/spatio_temporal_myocardinal_changes_ct
 git pull
 uv sync
-uv run pytest tests/test_export_crops.py
+uv run pytest tests/test_export_crops.py tests/test_valve_cli.py
 ```
 
-`uv sync` installs `blosc2`, which writes the `.b2nd` files GloViTa reads.
+`uv sync` installs `blosc2`, which writes the `.b2nd` files GloViTa reads. Run `uv sync` after every `git pull`, also
+when `UV_NO_SYNC=1` is set in the shell.
 
 ## Step 2: Export the 3D crops
 
@@ -146,31 +154,24 @@ and the ViT (PRIMUS, 674M parameters) best for classification, which is our task
 as a fallback if the ViT does not fit in memory. GloViTa reads the architecture from the checkpoint, so the same
 command works for both; only `--model.encoder.checkpoint_path` changes.
 
-## Step 4: Smoke test (2 epochs)
+## Step 4: Check the setup and run a smoke test
 
-Check that everything runs before starting a long job:
+All training and testing goes through `valve.py` in this repo, run from the repo root. It builds the long GloViTa
+commands from `valve_config.yaml` and the `.env` paths, and runs GloViTa with the Python of its own `.venv` directly (not
+through `uv run`), so the CUDA build of torch is never re-synced away and an active conda environment does not matter.
 
 ```bash
-cd ~/image_classification
-uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
-    --task.metrics f1 balanced_acc auroc \
-    --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
-    --dataloading.batch_size 2 --dataloading.num_workers 4 \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
-    model.encoder:nnfoundation_encoder_config \
-    --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
-    --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
-    model.head:classification_head_config \
-    logger:no_logger_config
+cd ~/spatio_temporal_myocardinal_changes_ct
+uv run side_project/valve_planes/valve.py check
+uv run side_project/valve_planes/valve.py smoke mitral
 ```
 
-`train_glovita.py` takes exactly the `glovita_train` arguments and only adds `mirror_axes = [0, 1]` (see below).
-`glovita_train` itself cannot set this: `--data.augmentation.train_kwargs` does not exist on its command line, because
-the field defaults to an empty dict and the CLI library only creates options for keys that already exist. Check in
-`experiments/generic_3d_dataset/<run>/0/resolved_config.json` that `train_kwargs` is `{"mirror_axes": [0, 1]}`.
-
-While it runs, check the memory use in a second terminal with `nvidia-smi`. If it is far below 32 GB, the batch size
-can be raised in step 5.
+- `check` verifies the paths, that GloViTa's torch sees the GPU, that the pretrained weights are downloaded, and prints
+  the closed/open counts per split for both valves.
+- `smoke` trains 2 short epochs in the terminal (the `smoke` section of `valve_config.yaml`).
+- While it runs, check the memory use in a second terminal with `nvidia-smi`. If it is far below 32 GB, the batch size
+  can be raised (`batch_size` in `valve_config.yaml`, or `--batch-size` for one run).
+- Every command has `--help`, and `train`/`smoke` accept `--dry-run` to only print the GloViTa command.
 
 ### Why mirroring only on axes 0 and 1
 
@@ -179,37 +180,35 @@ valid valve. Axis 2 is the flow direction: flipping it would put the aorta below
 leaflets of an open valve would appear to point against the flow. That is an image that never occurs in reality and
 blurs the open/closed difference, so axis 2 is not mirrored.
 
-## Step 5: The real training run
+`glovita_train` cannot set this itself: `--data.augmentation.train_kwargs` does not exist on its command line, because
+the field defaults to an empty dict and the CLI library only creates options for keys that already exist. `valve.py`
+therefore starts training through `train_glovita.py`, which takes the `glovita_train` arguments plus `--mirror_axes`
+(from `mirror_axes` in `valve_config.yaml`) and sets it in the config.
+
+## Step 5: Train
 
 ```bash
-cd ~/image_classification
-VALVE=mitral
-nohup uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
-    --task.metrics f1 balanced_acc auroc \
-    --optimizer.name AdamW --optimizer.lr 1e-4 --optimizer.weight_decay 0.01 --optimizer.warmup_epochs 5 \
-    --training.epochs 100 --training.precision bf16 --training.seed 42 \
-    --training.best_checkpoint_metric val_AUROC \
-    --dataloading.batch_size 2 --dataloading.num_workers 8 \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
-    model.encoder:nnfoundation_encoder_config \
-    --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
-    --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
-    model.head:classification_head_config \
-    logger:no_logger_config \
-    > train_$VALVE.log 2>&1 &
-tail -f train_$VALVE.log
+uv run side_project/valve_planes/valve.py train mitral
+uv run side_project/valve_planes/valve.py logs mitral       # follow the log, Ctrl+C to stop following
+uv run side_project/valve_planes/valve.py runs              # all runs with settings and validation metrics
 ```
 
-- Start with the **mitral** valve, then run the same with `VALVE=aortic`.
-- `nohup ... &` keeps the job running after logging out (or use `tmux`/`screen`).
-- `bf16` is the GloViTa default and is more stable than `fp16` on the 5090; the local RTX 2070 only supports `fp16`.
-- `train_steps_per_epoch` is left out, so each epoch is one pass over the training set.
+- `train` starts in the background and keeps running after logging out. The log is written to
+  `~/image_classification/valve_logs/`. Add `--foreground` to run in the terminal instead.
+- Start with the **mitral** valve, then `train aortic`.
+- Settings come from `valve_config.yaml`. To try something for one run, override it on the command line and add a note
+  that `runs` shows, e.g. `train mitral --lr 1e-5 --note "lower lr"`. Options: `--lr`, `--epochs`, `--batch-size`,
+  `--encoder vit|cnn`, `--linear-probe`, `--precision`.
+- `bf16` is the GloViTa default and is more stable than `fp16` on the 5090; the local RTX 2070 needs `--precision fp16`.
+- Each epoch is one pass over the training set.
 - **The best checkpoint is chosen by validation AUROC**, not accuracy: AUROC does not depend on a decision threshold
-  and stays meaningful when the classes are unbalanced.
+  and stays meaningful when the classes are unbalanced. There is no early stopping; the best checkpoint has the same
+  effect.
 - Full fine-tuning (the GloViTa default) updates all weights. With only ~100 training scans this can overfit. If
-  validation AUROC rises in the first epochs and then falls, compare with linear probing (add
-  `--peft.method linear_probing`), which only trains the classification head on top of the frozen pretrained encoder.
-- The number of epochs and the learning rate are reasonable starting points, not tuned values.
+  validation AUROC rises in the first epochs and then falls, compare with `--linear-probe`, which only trains the
+  classification head on top of the frozen pretrained encoder.
+- The number of epochs and the learning rate are reasonable starting points, not tuned values. Compare settings on
+  validation (`runs`), never on the test split.
 
 Results land in `~/image_classification/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../0/`:
 `metrics.json` (per epoch), `final_val_metrics.json`, `checkpoints/` and the full `resolved_config.json`.
@@ -219,17 +218,42 @@ Results land in `~/image_classification/experiments/generic_3d_dataset/<timestam
 Only once the settings are final (no more changes based on test results):
 
 ```bash
-cd ~/image_classification
-RUN=experiments/generic_3d_dataset/<run folder>
-uv run --no-sync glovita_infer --exp_dir $RUN --checkpoint best \
-    --metrics f1 balanced_acc auroc --pred_output $RUN/test_predictions.pt \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE
+uv run side_project/valve_planes/valve.py test mitral
+uv run side_project/valve_planes/valve.py errors mitral
 ```
 
-- `glovita_infer`'s own options (`--metrics`, `--checkpoint`, `--pred_output`) must come **before**
-  `data:generic3d_dataset_config`; options after a subcommand are applied to that subcommand.
-- `infer` uses the `test` entry of `splits.json` automatically.
-- `--pred_output` saves the per-scan predictions, probabilities and case ids, to look up the misclassified scans.
+- `test` evaluates the best checkpoint of the latest mitral run (`--run <part of the run name>` for another run) and
+  prints accuracy, balanced accuracy, macro F1, AUROC and the confusion matrix. It saves `test_metrics.json`,
+  `test_predictions.pt` and `test_predictions.csv` in the run folder. A run that was already tested shows its stored
+  results instead of evaluating again (`--force` to override), so the test split is not used by accident.
+- `glovita_infer` itself only computes accuracy and F1 and ignores `balanced_acc` and `auroc`; `valve.py test`
+  therefore computes all metrics from the saved per-scan predictions.
+- `errors` lists the misclassified test scans sorted by predicted probability of open (`--all` for every scan). A
+  probability near 0.5 points to a borderline scan; a confident error points to a label or crop worth checking in the
+  labelling PNGs.
+- `errors --show-phase` unblinds the scans with `blinded_key.csv` (patient and phase per scan) and prints the metrics
+  within ED and within ES, for the phase-shortcut check below.
+
+### Plots
+
+```bash
+uv run side_project/valve_planes/valve.py plots mitral
+```
+
+Writes PNGs to `<run folder>/0/plots/` (open them in VS Code over SSH):
+
+- `training_curves.png`: train and validation loss per epoch, and below it validation AUROC, balanced accuracy and F1,
+  with the best checkpoint marked. Works during and after training, before `test`.
+- `confusion_matrix.png`: the test confusion matrix with counts and the share of each true class (after `test`).
+- `misclassified_scans.png`: one row per misclassified test scan with the three labelling views (as shown in
+  `label_valves.py`) and the same three central slices of the 3D crop the model saw, plus the manual label, the
+  prediction and P(open). The most confidently correct closed and open test scans are added as references
+  (`--no-reference` to leave them out). Use it to judge whether the label was wrong, the scan is genuinely unclear, or
+  the model failed. `--all` shows every test scan (`test_scans.png`); `--show-phase` adds patient and phase.
+
+The labelling PNGs are read from `<VALVE_DATA_DIR>/valve_planes`; set `VALVE_PLANES_DIR` in `.env` if they are
+elsewhere. The model-input slices are single slices, while the long-axis labelling views are averaged over a thin slab,
+so they look slightly noisier.
 
 ## What to watch out for
 

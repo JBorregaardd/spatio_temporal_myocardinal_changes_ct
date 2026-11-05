@@ -1,0 +1,37 @@
+# Training and test settings for valve.py (the valve open/closed classifier trained with GloViTa).
+# Paths are not set here but in the repo-root .env: VALVE_DATA_DIR and GLOVITA_DIR (see .env.example).
+# Every value under `train` can also be overridden for a single run on the command line, see `valve.py train --help`.
+
+# Pretrained nnFoundation encoders, relative to the GloViTa clone.
+encoders:
+  vit: checkpoints/nnFoundationViT/checkpoint_final.pth
+  cnn: checkpoints/nnFoundationCNN/checkpoint_final.pth
+
+# Side lengths of the exported crops (export_crops.py).
+input_shape: [96, 96, 96]
+
+# Metrics logged by GloViTa during training.
+metrics: [f1, balanced_acc, auroc]
+
+# Train-time mirroring: only axes 0 and 1 (the valve plane), never axis 2 (the flow direction).
+mirror_axes: [0, 1]
+
+train:
+  encoder: vit                     # vit or cnn, a key of `encoders`
+  linear_probe: false              # true: only train the classification head on the frozen encoder
+  epochs: 100
+  lr: 1.0e-4                       # write floats with a dot (1.0e-4); YAML reads 1e-4 as text
+  weight_decay: 0.01
+  warmup_epochs: 5
+  batch_size: 2
+  num_workers: 8
+  precision: bf16                  # bf16 on the RTX 5090; the local RTX 2070 needs fp16
+  seed: 42
+  best_checkpoint_metric: val_AUROC
+
+# `valve.py smoke`: the train settings above with these overrides.
+smoke:
+  epochs: 2
+  train_steps_per_epoch: 10
+  val_steps_per_epoch: 10
+  num_workers: 4
