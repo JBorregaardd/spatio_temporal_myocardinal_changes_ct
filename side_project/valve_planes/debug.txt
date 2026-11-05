@@ -1,31 +1,18 @@
-(image_classification) s181487@DTU-GPU-7:~/image_classification$ uv run /home/s181487/image_classification/.venv/bin/glovita_train --help  
-Uninstalled 9 packages in 89ms
-Installed 9 packages in 76ms
-Traceback (most recent call last):
-  File "/home/s181487/image_classification/.venv/bin/glovita_train", line 4, in <module>
-    from glovita.cli.train import main
-  File "/home/s181487/image_classification/src/glovita/cli/train.py", line 10, in <module>
-    import torch
-  File "/home/s181487/image_classification/.venv/lib/python3.12/site-packages/torch/__init__.py", line 505, in <module>
-    from torch._C import *  # noqa: F403
-    ^^^^^^^^^^^^^^^^^^^^^^
-ImportError: /home/s181487/image_classification/.venv/lib/python3.12/site-packages/torch/lib/libtorch_nvshmem.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
-(image_classification) s181487@DTU-GPU-7:~/image_classification$ uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
-    --task.metrics f1 balanced_acc auroc \
-    --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
-    --dataloading.batch_size 2 --dataloading.num_workers 4 \
-    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
-    model.encoder:nnfoundation_encoder_config \
-    --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
-    --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
-    model.head:classification_head_config \
-    logger:no_logger_config
-Traceback (most recent call last):
-  File "/home/s181487/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py", line 13, in <module>
-    from glovita.cli.train import main
-  File "/home/s181487/image_classification/src/glovita/cli/train.py", line 10, in <module>
-    import torch
-  File "/home/s181487/image_classification/.venv/lib/python3.12/site-packages/torch/__init__.py", line 505, in <module>
-    from torch._C import *  # noqa: F403
-    ^^^^^^^^^^^^^^^^^^^^^^
-ImportError: /home/s181487/image_classification/.venv/lib/python3.12/site-packages/torch/lib/libtorch_nvshmem.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
+181487@DTU-GPU-7:~/image_classification$ uv run --no-sync glovita_infer --exp_dir $RUN --checkpoint best \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
+    --metrics f1 balanced_acc auroc
+╭─ Unrecognized options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Unrecognized or misplaced options:                                                                                                                                        │
+│   --metrics (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                         │
+│   f1 (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                                │
+│   balanced_acc (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                      │
+│   auroc (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                             │
+│                                                                                                                                                                           │
+│ Arguments are applied to the directly preceding subcommand, so ordering can matter.                                                                                       │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ Perhaps you meant:                                                                                                                                                        │
+│     --metrics [STR [STR ...]]                                                                                                                                             │
+│         Metric names to compute on the test set. Common values: acc, f1, mse, mae. (default: acc f1)                                                                      │
+│         in /home/s181487/image_classification/.venv/bin/glovita_infer --help                                                                                              │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ For full helptext, run /home/s181487/image_classification/.venv/bin/glovita_infer --help 
