@@ -1,0 +1,34 @@
+(image_classification) s181487@DTU-GPU-7:~/image_classification$ uv run --no-sync glovita_train \
+    --task.metrics f1 balanced_acc auroc \
+    --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
+    --dataloading.batch_size 2 --dataloading.num_workers 4 \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
+    --data.augmentation.train_kwargs '{"mirror_axes": [0, 1]}' \
+    model.encoder:nnfoundation_encoder_config \
+    --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
+    --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
+    model.head:classification_head_config \
+    logger:no_logger_config
+╭─ Unrecognized options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Unrecognized options: --data.augmentation.train_kwargs, {"mirror_axes": [0, 1]}                                                                                           │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ Available subcommands: peft:linear_probing_config, peft:full_finetuning_config, peft:partial_finetuning_config, peft:bit_fit_config, peft:ln_tuning_config,               │
+│ peft:ssf_config, peft:diff_fit_config, peft:lora_config, peft:ada_lora_config, peft:lo_ha_config, peft:lo_kr_config, peft:oft_config, peft:boft_config,                   │
+│ peft:ve_ra_config, peft:ia3_config, peft:fourier_ft_config, peft:adapt_former_config, peft:convpass_config, peft:rep_adapter_config, peft:fac_t_config, peft:gps_config,  │
+│ peft:visual_prompt_tuning_config                                                                                                                                          │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ Perhaps you meant:                                                                                                                                                        │
+│     --data.augmentation.train_policy {None,default_2d_1,default_2d_2,default_2d_3,default_2d_4,default_2d_5,default_2d_randaugment,default_3d_1,default_3d_2,             │
+│     default_3d_3,default_3d_4,default_nnunet,default_nnunet_DA5,default_nnfoundation,dataset_specific,baseline,baseline_cutout,autoaugment,randaugment,albumentations,    │
+│     dino,timm_randaugment,randaugment_448,randaugment_224,aid_large_crop,native}                                                                                          │
+│         Train-time augmentation policy name. (default: default_nnfoundation)                                                                                              │
+│         in /home/s181487/image_classification/.venv/bin/glovita_train data:generic3d_dataset_config --help                                                                │
+│         Train-time augmentation policy name. (default: aid_large_crop)                                                                                                    │
+│         in /home/s181487/image_classification/.venv/bin/glovita_train data:aid_config --help                                                                              │
+│         Train-time augmentation policy name. (default: default_2d_2)                                                                                                      │
+│         in /home/s181487/image_classification/.venv/bin/glovita_train data:chest_x_ray14_config --help                                                                    │
+│         Train-time augmentation policy name. (default: randaugment)                                                                                                       │
+│         in /home/s181487/image_classification/.venv/bin/glovita_train data:cifar100_config --help                                                                         │
+│     [...]                                                                                                                                                                 │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ For full helptext, run /home/s181487/image_classification/.venv/bin/glovita_train --help   

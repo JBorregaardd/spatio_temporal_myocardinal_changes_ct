@@ -48,7 +48,7 @@ uv run pytest tests/test_export_crops.py
 
 ```bash
 cd $REPO
-uv run side_project/valve_planes/export_crops.py $D/valve_planes $D/crops --key-path $D/blinded_key.csv
+uv run side_project/valve_planes/export_crops.py /data/Data/JERI/data/CGPS10_ED_ES/valve_planes /data/Data/JERI/data/CGPS10_ED_ES/crops --key-path /data/Data/JERI/data/CGPS10_ED_ES/blinded_key.csv
 ```
 
 The script ends with a line per valve such as `mitral: 160 labelled scans {'closed': 70, 'open': 90}`. Write these
@@ -156,7 +156,7 @@ uv run --no-sync glovita_train \
     --task.metrics f1 balanced_acc auroc \
     --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
     --dataloading.batch_size 2 --dataloading.num_workers 4 \
-    data:generic3d_dataset_config --data.data_root_dir $D/crops/mitral \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
     --data.augmentation.train_kwargs '{"mirror_axes": [0, 1]}' \
     model.encoder:nnfoundation_encoder_config \
     --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
