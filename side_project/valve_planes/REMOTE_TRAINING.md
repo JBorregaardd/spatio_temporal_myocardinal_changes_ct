@@ -23,20 +23,20 @@ CGPS CT + TotalSegmentator ──valve_planes.py──► <id>_valves.json (valv
 | 4. Set up GloViTa + the pretrained weights | separate clone | **to do** |
 | 5. Train, then evaluate on the test split | GloViTa | **to do** |
 
-## Step 0: Variables used below
+## Step 0: Paths used below
 
-```bash
-D=/data/Data/JERI/data/CGPS10_ED_ES
-REPO=~/spatio_temporal_myocardinal_changes_ct
-GLOVITA=~/image_classification
-```
+| What | Path on the remote |
+| --- | --- |
+| Data (CT, outputs, crops) | `/data/Data/JERI/data/CGPS10_ED_ES` |
+| This repo | `~/spatio_temporal_myocardinal_changes_ct` |
+| GloViTa clone | `~/image_classification` |
 
-Adjust `REPO` and `GLOVITA` to where the repos live on the remote.
+The commands below use these paths directly.
 
 ## Step 1: Update this repo
 
 ```bash
-cd $REPO
+cd ~/spatio_temporal_myocardinal_changes_ct
 git pull
 uv sync
 uv run pytest tests/test_export_crops.py
@@ -47,7 +47,7 @@ uv run pytest tests/test_export_crops.py
 ## Step 2: Export the 3D crops
 
 ```bash
-cd $REPO
+cd ~/spatio_temporal_myocardinal_changes_ct
 uv run side_project/valve_planes/export_crops.py /data/Data/JERI/data/CGPS10_ED_ES/valve_planes /data/Data/JERI/data/CGPS10_ED_ES/crops --key-path /data/Data/JERI/data/CGPS10_ED_ES/blinded_key.csv
 ```
 
@@ -57,11 +57,11 @@ counts down; they decide whether the training makes sense (see "What to watch ou
 Output:
 
 ```
-$D/crops/mitral/images/S001.b2nd   float32 array, shape (1, 96, 96, 96)
-$D/crops/mitral/dataset.json       {"num_classes": 2, "subtask": "multiclass"}
-$D/crops/mitral/labels.json        {"S001": 1, ...}   0 = closed, 1 = open
-$D/crops/mitral/splits.json        {"train": [...], "val": [...], "test": [...]}
-$D/crops/aortic/...                the same for the aortic valve
+/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/images/S001.b2nd   float32 array, shape (1, 96, 96, 96)
+/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/dataset.json       {"num_classes": 2, "subtask": "multiclass"}
+/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/labels.json        {"S001": 1, ...}   0 = closed, 1 = open
+/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/splits.json        {"train": [...], "val": [...], "test": [...]}
+/data/Data/JERI/data/CGPS10_ED_ES/crops/aortic/...                the same for the aortic valve
 ```
 
 ### From 2D images to 3D crops
@@ -116,7 +116,7 @@ Pin the commit that was tested locally:
 ```bash
 cd ~
 git clone https://github.com/MIC-DKFZ/image_classification.git
-cd $GLOVITA
+cd ~/image_classification
 git checkout 025e5942f5b6471889e5b8d1e6355ab4a331e402
 uv venv
 uv pip install -e .
@@ -134,7 +134,7 @@ The last line must print `True` and `NVIDIA GeForce RTX 5090`.
 ### Pretrained weights
 
 ```bash
-cd $GLOVITA
+cd ~/image_classification
 uv pip install huggingface_hub
 uv run --no-sync hf download MIC-DKFZ/nnFoundationViT checkpoint_final.pth --local-dir checkpoints/nnFoundationViT
 uv run --no-sync hf download MIC-DKFZ/nnFoundationCNN checkpoint_final.pth adaptation_plan.json \
@@ -151,12 +151,12 @@ command works for both; only `--model.encoder.checkpoint_path` changes.
 Check that everything runs before starting a long job:
 
 ```bash
-cd $GLOVITA
-uv run --no-sync python $REPO/side_project/valve_planes/train_glovita.py \
+cd ~/image_classification
+uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
     --task.metrics f1 balanced_acc auroc \
     --training.epochs 2 --training.train_steps_per_epoch 10 --training.val_steps_per_epoch 10 \
     --dataloading.batch_size 2 --dataloading.num_workers 4 \
-    data:generic3d_dataset_config --data.data_root_dir $D/crops/mitral \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral \
     model.encoder:nnfoundation_encoder_config \
     --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
     --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
@@ -182,15 +182,15 @@ blurs the open/closed difference, so axis 2 is not mirrored.
 ## Step 5: The real training run
 
 ```bash
-cd $GLOVITA
+cd ~/image_classification
 VALVE=mitral
-nohup uv run --no-sync python $REPO/side_project/valve_planes/train_glovita.py \
+nohup uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
     --task.metrics f1 balanced_acc auroc \
     --optimizer.name AdamW --optimizer.lr 1e-4 --optimizer.weight_decay 0.01 --optimizer.warmup_epochs 5 \
     --training.epochs 100 --training.precision bf16 --training.seed 42 \
     --training.best_checkpoint_metric val_AUROC \
     --dataloading.batch_size 2 --dataloading.num_workers 8 \
-    data:generic3d_dataset_config --data.data_root_dir $D/crops/$VALVE \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
     model.encoder:nnfoundation_encoder_config \
     --model.encoder.checkpoint_path checkpoints/nnFoundationViT/checkpoint_final.pth \
     --model.encoder.input_channels 1 --model.encoder.input_shape 96 96 96 \
@@ -211,7 +211,7 @@ tail -f train_$VALVE.log
   `--peft.method linear_probing`), which only trains the classification head on top of the frozen pretrained encoder.
 - The number of epochs and the learning rate are reasonable starting points, not tuned values.
 
-Results land in `$GLOVITA/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../0/`:
+Results land in `~/image_classification/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../0/`:
 `metrics.json` (per epoch), `final_val_metrics.json`, `checkpoints/` and the full `resolved_config.json`.
 
 ## Step 6: Evaluate on the test split
@@ -219,10 +219,10 @@ Results land in `$GLOVITA/experiments/generic_3d_dataset/<timestamp>_nnfoundatio
 Only once the settings are final (no more changes based on test results):
 
 ```bash
-cd $GLOVITA
+cd ~/image_classification
 RUN=experiments/generic_3d_dataset/<run folder>
 uv run --no-sync glovita_infer --exp_dir $RUN --checkpoint best \
-    data:generic3d_dataset_config --data.data_root_dir $D/crops/$VALVE \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
     --metrics f1 balanced_acc auroc
 ```
 

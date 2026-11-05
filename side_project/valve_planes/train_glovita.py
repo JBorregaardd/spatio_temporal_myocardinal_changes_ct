@@ -4,8 +4,9 @@ GloViTa's ``AugmentationConfig.train_kwargs`` defaults to an empty dict, so its 
 ``mirror_axes`` cannot be set from the command line. This wrapper parses the usual ``glovita_train`` arguments, sets
 ``mirror_axes`` in ``train_kwargs`` and starts training. Run it from the GloViTa clone with GloViTa's environment:
 
-    cd $GLOVITA
-    uv run --no-sync python $REPO/side_project/valve_planes/train_glovita.py <glovita_train arguments>
+    cd ~/image_classification
+    uv run --no-sync python ~/spatio_temporal_myocardinal_changes_ct/side_project/valve_planes/train_glovita.py \
+        <glovita_train arguments>
 """
 from __future__ import annotations
 
