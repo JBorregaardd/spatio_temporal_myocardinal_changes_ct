@@ -1,7 +1,8 @@
 """
 Analyse the output of ct_quality_checks.py and decide which scans to exclude.
 
-A scan is excluded if it has limited RV contrast (k >= K_THRESHOLD) or low image quality (CNR < CNR_THRESHOLD).
+A scan is excluded only if it has both limited RV contrast (k >= K_THRESHOLD) and low image quality
+(CNR < CNR_THRESHOLD).
 The script prints how many scans each criterion excludes and saves histograms of k and CNR and a k-vs-CNR scatter
 plot with the thresholds, and a table with the exclusion flags.
 
@@ -53,7 +54,7 @@ def add_exclusion_flags(results: pd.DataFrame, k_threshold: int, cnr_threshold: 
     flagged = results[["patient_id", "k", "cnr"]].copy()
     flagged["low_rv_contrast"] = flagged["k"] >= k_threshold
     flagged["low_cnr"] = flagged["cnr"] < cnr_threshold
-    flagged["excluded"] = flagged["low_rv_contrast"] | flagged["low_cnr"]
+    flagged["excluded"] = flagged["low_rv_contrast"] & flagged["low_cnr"]
     return flagged
 
 
@@ -67,11 +68,10 @@ def exclusion_summary(flagged: pd.DataFrame) -> pd.DataFrame:
         One row per group with the columns ``n`` and ``percent``.
     """
     groups = {
-        "Low RV contrast only": flagged["low_rv_contrast"] & ~flagged["low_cnr"],
-        "Low CNR only": flagged["low_cnr"] & ~flagged["low_rv_contrast"],
-        "Both": flagged["low_rv_contrast"] & flagged["low_cnr"],
-        "Excluded in total": flagged["excluded"],
-        "Kept": ~flagged["excluded"],
+        "Low RV contrast only (kept)": flagged["low_rv_contrast"] & ~flagged["low_cnr"],
+        "Low CNR only (kept)": flagged["low_cnr"] & ~flagged["low_rv_contrast"],
+        "Both (excluded)": flagged["excluded"],
+        "Kept in total": ~flagged["excluded"],
     }
     counts = pd.Series({name: int(mask.sum()) for name, mask in groups.items()}, name="n")
     return pd.DataFrame({"n": counts, "percent": (100 * counts / len(flagged)).round(1)})
@@ -165,10 +165,10 @@ def main() -> None:
     print(f"\nScans with k = 0: {(results['k'] == 0).sum()}")
     print(f"Scans with k >= {args.k_threshold}: {flagged['low_rv_contrast'].sum()}")
     print(f"Scans with CNR < {args.cnr_threshold:g}: {flagged['low_cnr'].sum()}")
-    print(f"Scans to exclude (k >= {args.k_threshold} or CNR < {args.cnr_threshold:g}): {flagged['excluded'].sum()} "
+    print(f"Scans to exclude (k >= {args.k_threshold} and CNR < {args.cnr_threshold:g}): {flagged['excluded'].sum()} "
           f"of {len(flagged)}")
 
-    print(f"\nExclusion with k >= {args.k_threshold} or CNR < {args.cnr_threshold:g}:")
+    print(f"\nExclusion with k >= {args.k_threshold} and CNR < {args.cnr_threshold:g}:")
     print(exclusion_summary(flagged).to_string())
 
     table_path = os.path.join(table_dir, f"{args.dataset}_ct_quality_exclusion.csv")
