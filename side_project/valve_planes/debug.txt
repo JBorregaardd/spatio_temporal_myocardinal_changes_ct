@@ -1,0 +1,18 @@
+181487@DTU-GPU-7:~/image_classification$ uv run --no-sync glovita_infer --exp_dir $RUN --checkpoint best \
+    data:generic3d_dataset_config --data.data_root_dir /data/Data/JERI/data/CGPS10_ED_ES/crops/$VALVE \
+    --metrics f1 balanced_acc auroc
+╭─ Unrecognized options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Unrecognized or misplaced options:                                                                                                                                        │
+│   --metrics (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                         │
+│   f1 (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                                │
+│   balanced_acc (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                      │
+│   auroc (applied to /home/s181487/image_classification/.venv/bin/glovita_infer data:generic3d_dataset_config)                                                             │
+│                                                                                                                                                                           │
+│ Arguments are applied to the directly preceding subcommand, so ordering can matter.                                                                                       │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ Perhaps you meant:                                                                                                                                                        │
+│     --metrics [STR [STR ...]]                                                                                                                                             │
+│         Metric names to compute on the test set. Common values: acc, f1, mse, mae. (default: acc f1)                                                                      │
+│         in /home/s181487/image_classification/.venv/bin/glovita_infer --help                                                                                              │
+│ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ For full helptext, run /home/s181487/image_classification/.venv/bin/glovita_infer --help 
