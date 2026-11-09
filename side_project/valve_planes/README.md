@@ -78,6 +78,22 @@ uv run side_project/valve_planes/valve_planes.py $D/blinded/images $D/blinded/se
 uv run side_project/valve_planes/label_valves.py $D/valve_planes
 ```
 
+To label more scans later, extend the dataset instead of rebuilding it; rebuilding would reshuffle the scan ids and
+put the existing labels on the wrong scans (`make_phase_dataset.py` refuses to overwrite an existing `dataset.csv`).
+`--extend` keeps the patients in `dataset.csv` and draws `--n-patients` new ones per phase; `blind_phase_dataset.py`
+keeps the ids in `blinded_key.csv` and numbers the new scans after them; `valve_planes.py` skips scans it has already
+processed; and `label_valves.py` opens at the first unlabelled scan. Pass a new `--seed` each time you extend, so a
+second extension does not repeat the shuffle of the first.
+
+```bash
+uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100 --extend --seed 43
+uv run side_project/valve_planes/fetch_phase_segmentations.py
+uv run side_project/valve_planes/blind_phase_dataset.py --seed 43
+uv run side_project/valve_planes/valve_planes.py $D/blinded/images $D/blinded/segmentations $D/valve_planes \
+    --image-pattern "{id}.nii.gz"
+uv run side_project/valve_planes/label_valves.py $D/valve_planes
+```
+
 Some patients can appear in both phases, so split train and test sets by patient, not by scan.
 
 ## Labelling

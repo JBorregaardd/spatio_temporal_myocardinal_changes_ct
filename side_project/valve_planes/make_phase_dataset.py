@@ -5,8 +5,13 @@ phases, and links (or copies) the scans to ``<output>/ED/<id>.nii.gz`` and ``<ou
 ``dataset.csv`` file records the patient id, phase and source path of every scan. Each phase folder can be passed
 straight to ``valve_planes.py`` with ``--image-pattern "{id}.nii.gz"``.
 
+With ``--extend``, the patients already in ``dataset.csv`` are kept and ``--n-patients`` new patients per phase are
+drawn from the rest, so labels of the existing scans stay valid. Without it, an existing ``dataset.csv`` is never
+overwritten.
+
 Example:
     uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100
+    uv run side_project/valve_planes/make_phase_dataset.py --n-patients 100 --extend
 """
 from __future__ import annotations
 
@@ -65,6 +70,28 @@ def sample_patients(scans: dict[str, str], n_patients: int, rng: random.Random) 
     return sorted(rng.sample(sorted(scans, key=int), n_patients), key=int)
 
 
+def draw_new_patients(scans: dict[str, str], taken: set[str], n_patients: int, rng: random.Random) -> dict[str, str]:
+    """Draw ``n_patients`` random patients of one file list that are not in ``taken``.
+
+    Args:
+        scans: ``{patient_id: scan_path}`` of the file list.
+        taken: Patient ids already in the dataset for this phase.
+        n_patients: Number of new patients.
+        rng: Random generator.
+
+    Returns:
+        ``{patient_id: scan_path}`` of the new patients.
+    """
+    available = {patient_id: path for patient_id, path in scans.items() if patient_id not in taken}
+    return {patient_id: scans[patient_id] for patient_id in sample_patients(available, n_patients, rng)}
+
+
+def read_dataset(path: str) -> list[dict[str, str]]:
+    """Read the rows of ``dataset.csv``."""
+    with open(path, newline="") as file:
+        return list(csv.DictReader(file))
+
+
 def place_scan(source: str, destination: str, copy: bool) -> None:
     """Copy or symlink ``source`` to ``destination``, replacing an existing link or file."""
     if os.path.lexists(destination):
@@ -98,27 +125,37 @@ def build_dataset(selection: dict[str, dict[str, str]], output_folder: str, copy
 
 def main(
     output_folder: str = typer.Option(OUTPUT_FOLDER, help="Folder the ED/ and ES/ folders and dataset.csv go in."),
-    n_patients: int = typer.Option(100, help="Number of scans drawn per phase."),
+    n_patients: int = typer.Option(100, help="Number of scans drawn per phase (new scans with --extend)."),
+    extend: bool = typer.Option(False, help="Keep the scans in dataset.csv and add --n-patients new ones per phase."),
     seed: int = typer.Option(42, help="Seed of the random patient selection."),
     ed_filelist: str = typer.Option(ED_FILELIST, help="File list of the end-diastolic scans."),
     es_filelist: str = typer.Option(ES_FILELIST, help="File list of the end-systolic scans."),
     copy: bool = typer.Option(False, help="Copy the scans instead of symlinking them."),
 ) -> None:
-    """Build the ED/ES dataset and write ``dataset.csv``."""
+    """Build (or extend) the ED/ES dataset and write ``dataset.csv``."""
+    csv_path = os.path.join(output_folder, "dataset.csv")
+    if extend and not os.path.isfile(csv_path):
+        raise typer.BadParameter(f"--extend needs an existing {csv_path}")
+    if not extend and os.path.isfile(csv_path):
+        raise typer.BadParameter(f"{csv_path} exists; pass --extend to add patients, or delete it to start over")
+    existing = read_dataset(csv_path) if extend else []
     rng = random.Random(seed)
     selection = {}
     for phase, filelist in (("ED", ed_filelist), ("ES", es_filelist)):
-        scans = read_filelist(filelist)
-        selection[phase] = {patient_id: scans[patient_id] for patient_id in sample_patients(scans, n_patients, rng)}
-    rows = build_dataset(selection, output_folder, copy)
+        taken = {row["patient_id"] for row in existing if row["phase"] == phase}
+        selection[phase] = draw_new_patients(read_filelist(filelist), taken, n_patients, rng)
+    rows = existing + build_dataset(selection, output_folder, copy)
 
-    csv_path = os.path.join(output_folder, "dataset.csv")
     with open(csv_path, "w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-    overlap = len(selection["ED"].keys() & selection["ES"].keys())
-    print(f"{len(rows)} scans ({n_patients} per phase, {overlap} patients in both) saved to {output_folder}")
+    patients = {phase: {row["patient_id"] for row in rows if row["phase"] == phase} for phase in ("ED", "ES")}
+    overlap = len(patients["ED"] & patients["ES"])
+    print(
+        f"{len(rows)} scans ({len(existing)} existing, {n_patients} new per phase, {overlap} patients in both) "
+        f"saved to {output_folder}"
+    )
 
 
 if __name__ == "__main__":

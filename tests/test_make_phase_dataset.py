@@ -8,7 +8,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "side_project" / "valve_planes"))
 
-from make_phase_dataset import build_dataset, read_filelist, sample_patients  # noqa: E402
+from make_phase_dataset import build_dataset, draw_new_patients, read_filelist, sample_patients  # noqa: E402
 
 NIFTI = "/storage/Data/DTU-CGPS-10y-august-2026/NIFTI"
 
@@ -39,6 +39,17 @@ def test_sample_patients_is_reproducible_and_checks_the_size() -> None:
     assert drawn == sample_patients(scans, 5, random.Random(0))
     with pytest.raises(ValueError):
         sample_patients(scans, 21, random.Random(0))
+
+
+def test_draw_new_patients_skips_patients_already_in_the_dataset() -> None:
+    scans = {f"{i:04d}": f"{i}.nii.gz" for i in range(10)}
+    taken = {f"{i:04d}" for i in range(6)}
+
+    drawn = draw_new_patients(scans, taken, 4, random.Random(0))
+
+    assert drawn == {f"{i:04d}": f"{i}.nii.gz" for i in range(6, 10)}
+    with pytest.raises(ValueError):
+        draw_new_patients(scans, taken, 5, random.Random(0))
 
 
 def test_build_dataset_places_each_phase_in_its_own_folder(tmp_path: Path) -> None:

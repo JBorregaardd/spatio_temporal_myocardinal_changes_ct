@@ -24,6 +24,18 @@ def test_assign_scan_ids_keeps_every_scan_once_and_is_reproducible() -> None:
     assert [row["phase"] for row in key] != [row["phase"] for row in ROWS]
 
 
+def test_assign_scan_ids_keeps_the_existing_key_and_numbers_new_scans_after_it() -> None:
+    key = assign_scan_ids(ROWS, seed=0)
+    new_rows = [{"patient_id": f"{i:04d}", "phase": "ES"} for i in range(10, 15)]
+
+    extended = assign_scan_ids(ROWS + new_rows, seed=1, key=key)
+
+    assert extended[:20] == key
+    assert [row["scan_id"] for row in extended[20:]] == [f"S{i:03d}" for i in range(21, 26)]
+    assert sorted(row["patient_id"] for row in extended[20:]) == [f"{i:04d}" for i in range(10, 15)]
+    assert assign_scan_ids(ROWS, seed=1, key=key) == key
+
+
 def test_link_blinded_links_images_and_existing_segmentations(tmp_path: Path) -> None:
     dataset = tmp_path / "dataset"
     for phase, pid in (("ED", "0000"), ("ES", "0000")):
