@@ -107,6 +107,17 @@ preference:
 The classifier is not trained on these views but on 3D crops around the valve (`export_crops.py`); see
 [REMOTE_TRAINING.md](REMOTE_TRAINING.md) for the export, the train/validation/test split and the GloViTa training.
 
+## Viewing a scan in 3D Slicer
+
+`slicer_valve_scene.py` rebuilds the views of one `<id>_valves.json` in 3D Slicer, for figures. It sets the Red, Yellow and
+Green viewers to `en_face`, `long_axis_a` and `long_axis_b`, shows the valve axes as arrows and shows the `export_crops.py`
+cube as an ROI box. The JSON stores LPS coordinates; the script converts them to Slicer's RAS. It runs inside Slicer's
+Python, not `uv`:
+
+```bash
+"C:/Program Files/Slicer 5.x/Slicer.exe" --python-script side_project/valve_planes/slicer_valve_scene.py side_project/valve_planes/output/1_valves.json aortic
+```
+
 ## What to check
 
 Look through the images of the first scans: the valve should sit roughly in the centre and an open and a closed valve

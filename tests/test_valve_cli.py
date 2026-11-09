@@ -117,7 +117,12 @@ def test_find_select_and_summarize_runs(tmp_path: Path, env: tuple[Path, Path]) 
 
     summary = valve.summarize_run(valve.select_run(paths, "mitral", "04f53122"))
     assert summary["run"] == "20261104_124730_04f53122"
-    assert (summary["encoder"], summary["best_val_auroc"], summary["best_epoch"]) == ("vit", 0.9, 1)
+    assert (summary["encoder"], summary["best_metric"], summary["best_val"], summary["best_epoch"]) == (
+        "vit",
+        "AUROC",
+        0.9,
+        1,
+    )
     assert (summary["epochs"], summary["status"], summary["note"]) == ("3/100", "done", "baseline")
 
 

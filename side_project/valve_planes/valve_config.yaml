@@ -27,7 +27,7 @@ train:
   num_workers: 8
   precision: bf16                  # bf16 on the RTX 5090; the local RTX 2070 needs fp16
   seed: 42
-  best_checkpoint_metric: val_AUROC
+  best_checkpoint_metric: val_Balanced_Accuracy  # not val_AUROC: it is threshold-free and was 1.0 at epoch 1
 
 # `valve.py smoke`: the train settings above with these overrides.
 smoke:

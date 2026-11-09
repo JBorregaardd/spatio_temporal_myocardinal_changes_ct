@@ -306,8 +306,9 @@ def summarize_run(run: Run) -> dict[str, Any]:
     checkpoint = str(resolved.get("model", {}).get("encoder", {}).get("checkpoint_path", ""))
     encoder = "vit" if "ViT" in checkpoint else "cnn" if "CNN" in checkpoint else checkpoint
     history = read_json(run.path / "metrics.json") or {"val": []}
-    val_rows = [row for row in history.get("val", []) if "val_AUROC" in row]
-    best = max(val_rows, key=lambda row: row["val_AUROC"], default=None)
+    best_metric = resolved.get("training", {}).get("best_checkpoint_metric") or "val_AUROC"
+    val_rows = [row for row in history.get("val", []) if best_metric in row]
+    best = max(val_rows, key=lambda row: row[best_metric], default=None)
     final = read_json(run.path / "final_val_metrics.json")
     return {
         "run": run.short_name,
@@ -317,7 +318,8 @@ def summarize_run(run: Run) -> dict[str, Any]:
         "lr": resolved.get("optimizer", {}).get("lr"),
         "epochs": f"{len(history.get('val', []))}/{resolved.get('training', {}).get('epochs', '?')}",
         "status": "done" if final else "running or stopped",
-        "best_val_auroc": best["val_AUROC"] if best else None,
+        "best_metric": best_metric.removeprefix("val_"),
+        "best_val": best[best_metric] if best else None,
         "best_epoch": best["epoch"] if best else None,
         "final_val": final,
         "test": read_json(run.path / "test_metrics.json"),
@@ -574,13 +576,13 @@ def runs(valve: Optional[Valve] = typer.Argument(None, help="Only show runs of t
     if not summaries:
         console.print(f"No runs in {paths.experiments_dir}.")
         return
-    table = Table("run", "valve", "encoder", "peft", "lr", "epochs", "best val AUROC (epoch)", "final val F1 / bal acc")
+    table = Table("run", "valve", "encoder", "peft", "lr", "epochs", "best val (epoch)", "final val F1 / bal acc")
     table.add_column("test F1 / AUROC")
     table.add_column("note")
     for summary in summaries:
         final = summary["final_val"] or {}
         test = summary["test"] or {}
-        best = format_metric(summary["best_val_auroc"])
+        best = f"{summary['best_metric']} {format_metric(summary['best_val'])}"
         table.add_row(
             summary["run"],
             summary["valve"],
