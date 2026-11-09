@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "side_project" / "valve_planes"))
 
 import valve  # noqa: E402
-from train_glovita import split_mirror_axes  # noqa: E402
+from train_glovita import checkpoint_files, split_mirror_axes  # noqa: E402
 
 RUN_NAME = "20261104_124730_nnfoundationencoder_classificationhead_full_finetuning_04f53122"
 
@@ -83,6 +83,31 @@ def test_split_mirror_axes_removes_the_option() -> None:
 
 def test_split_mirror_axes_defaults_when_absent() -> None:
     assert split_mirror_axes(["data:x"]) == ([0, 1], ["data:x"])
+
+
+def test_checkpoint_files_keep_only_best_and_final_last() -> None:
+    assert checkpoint_files(epoch=7, n_epochs=100, is_best=True) == ["best.pt"]
+    assert checkpoint_files(epoch=7, n_epochs=100, is_best=False) == []
+    assert checkpoint_files(epoch=99, n_epochs=100, is_best=False) == ["last.pt"]
+
+
+def test_save_lean_checkpoint_writes_weights_without_optimizer(tmp_path: Path) -> None:
+    torch = pytest.importorskip("torch")
+    from types import SimpleNamespace
+
+    from train_glovita import save_lean_checkpoint
+
+    model = torch.nn.Linear(2, 1)
+    trainer = SimpleNamespace(
+        cfg=SimpleNamespace(epochs=3), log_dir=tmp_path, accelerator=SimpleNamespace(unwrap_model=lambda m: m)
+    )
+    save_lean_checkpoint(trainer, model, None, epoch=0, is_best=True)
+    save_lean_checkpoint(trainer, model, None, epoch=1, is_best=False)
+    save_lean_checkpoint(trainer, model, None, epoch=2, is_best=False)
+    files = sorted(path.name for path in (tmp_path / "checkpoints").iterdir())
+    assert files == ["best.pt", "last.pt"]
+    state = torch.load(tmp_path / "checkpoints" / "best.pt")
+    assert set(state) == {"epoch", "model"} and state["epoch"] == 0
 
 
 def test_train_settings_applies_smoke_then_command_line(config: dict) -> None:

@@ -226,7 +226,9 @@ uv run side_project/valve_planes/valve.py runs              # all runs with sett
 
 Results land in `~/image_classification/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../`, with one
 folder per fold (`0/` … `4/`) holding `metrics.json` (per epoch), `final_val_metrics.json` (the best checkpoint on that
-fold's validation patients), `checkpoints/` and the full `resolved_config.json`. `runs` shows one row per run with the
+fold's validation patients), `checkpoints/` and the full `resolved_config.json`. `checkpoints/` holds only `best.pt`
+and the final `last.pt`, each ~2.7 GB of weights without the optimizer state: GloViTa itself would save weights plus
+optimizer state (~8 GB) for every epoch and never delete them, so `train_glovita.py` replaces its checkpoint saving. `runs` shows one row per run with the
 mean ± standard deviation of the folds' best validation values and the mean final F1 and balanced accuracy.
 
 ## Step 6: Evaluate on the test split
