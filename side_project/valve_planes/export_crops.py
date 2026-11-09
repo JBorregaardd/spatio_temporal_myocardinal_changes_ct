@@ -9,7 +9,8 @@ and the median blood pool 1. One dataset folder is written per valve:
     <output>/<valve>/images/<id>.b2nd   float32 crop of shape (1, u, v, normal)
     <output>/<valve>/dataset.json       {"num_classes": 2, "subtask": "multiclass"}
     <output>/<valve>/labels.json        {"<id>": 0 (closed) or 1 (open)}
-    <output>/<valve>/splits.json        {"train": [...], "val": [...], "test": [...]}, split by patient
+    <output>/<valve>/splits.json        [{"train": [...], "val": [...], "test": [...]}, ...] one per fold, split by
+                                        patient; all folds share one test set ({...} without a list for --folds 1)
 
 Example:
     uv run side_project/valve_planes/export_crops.py side_project/valve_planes/output side_project/valve_planes/output/crops
@@ -111,6 +112,42 @@ def read_groups(path: str | None) -> dict[str, str]:
         return {row["scan_id"]: row["patient_id"] for row in csv.DictReader(file)}
 
 
+def stratified_patient_parts(
+    labels: dict[str, int],
+    groups: dict[str, str],
+    fractions: tuple[float, float, float] = SPLIT_FRACTIONS,
+    seed: int = 42,
+) -> tuple[dict[str, list[str]], list[dict[str, list[str]]]]:
+    """Group scans by patient, stratify the patients by their set of labels and cut each stratum into train/val/test.
+
+    Args:
+        labels: Scan id to label.
+        groups: Scan id to patient id; scans missing from it are their own patient.
+        fractions: Train, validation and test fractions of the patients in each stratum.
+        seed: Seed of the shuffle.
+
+    Returns:
+        Tuple of (patient id to scan ids, one ``{"train", "val", "test"}`` dict of patient ids per stratum).
+    """
+    patients: dict[str, list[str]] = {}
+    for scan_id in labels:
+        patients.setdefault(groups.get(scan_id, scan_id), []).append(scan_id)
+    strata: dict[tuple[int, ...], list[str]] = {}
+    for patient, scans in sorted(patients.items()):
+        strata.setdefault(tuple(sorted({labels[s] for s in scans})), []).append(patient)
+
+    rng = random.Random(seed)
+    parts = []
+    for members in strata.values():
+        rng.shuffle(members)
+        n_val = round(len(members) * fractions[1])
+        n_test = round(len(members) * fractions[2])
+        parts.append(
+            {"val": members[:n_val], "test": members[n_val : n_val + n_test], "train": members[n_val + n_test :]}
+        )
+    return patients, parts
+
+
 def split_by_patient(
     labels: dict[str, int],
     groups: dict[str, str],
@@ -130,23 +167,60 @@ def split_by_patient(
     Returns:
         ``{"train": [...], "val": [...], "test": [...]}`` with sorted scan ids.
     """
-    patients: dict[str, list[str]] = {}
-    for scan_id in labels:
-        patients.setdefault(groups.get(scan_id, scan_id), []).append(scan_id)
-    strata: dict[tuple[int, ...], list[str]] = {}
-    for patient, scans in sorted(patients.items()):
-        strata.setdefault(tuple(sorted({labels[s] for s in scans})), []).append(patient)
+    patients, parts = stratified_patient_parts(labels, groups, fractions, seed)
+    return {
+        name: sorted(scan for part in parts for patient in part[name] for scan in patients[patient])
+        for name in SPLIT_NAMES
+    }
 
-    rng = random.Random(seed)
-    splits: dict[str, list[str]] = {name: [] for name in SPLIT_NAMES}
-    for members in strata.values():
-        rng.shuffle(members)
-        n_val = round(len(members) * fractions[1])
-        n_test = round(len(members) * fractions[2])
-        parts = {"val": members[:n_val], "test": members[n_val:n_val + n_test], "train": members[n_val + n_test:]}
-        for name, part in parts.items():
-            splits[name].extend(scan for patient in part for scan in patients[patient])
-    return {name: sorted(scans) for name, scans in splits.items()}
+
+def cross_validation_splits(
+    labels: dict[str, int],
+    groups: dict[str, str],
+    n_folds: int,
+    fractions: tuple[float, float, float] = SPLIT_FRACTIONS,
+    seed: int = 42,
+) -> list[dict[str, list[str]]]:
+    """Split labelled scans into a fixed test set and ``n_folds`` cross-validation folds of the remaining patients.
+
+    The test set is the one of ``split_by_patient`` with the same fractions and seed. The other patients are dealt
+    round-robin over the folds within each stratum, so every fold holds both classes when the strata are big enough
+    and all scans of a patient stay in one fold.
+
+    Args:
+        labels: Scan id to label.
+        groups: Scan id to patient id; scans missing from it are their own patient.
+        n_folds: Number of folds.
+        fractions: Fractions as in ``split_by_patient``; only the test fraction matters here.
+        seed: Seed of the shuffle.
+
+    Returns:
+        One ``{"train": [...], "val": [...], "test": [...]}`` dict per fold, with sorted scan ids; fold ``k``
+        validates on its own patients and trains on those of the other folds.
+    """
+    patients, parts = stratified_patient_parts(labels, groups, fractions, seed)
+    test = sorted(scan for part in parts for patient in part["test"] for scan in patients[patient])
+    fold_patients: list[list[str]] = [[] for _ in range(n_folds)]
+    offset = 0
+    for part in parts:
+        rest = part["val"] + part["train"]
+        for index, patient in enumerate(rest):
+            fold_patients[(offset + index) % n_folds].append(patient)
+        offset += len(rest)
+    fold_scans = [sorted(scan for patient in members for scan in patients[patient]) for members in fold_patients]
+    return [
+        {
+            "train": sorted(scan for other, scans in enumerate(fold_scans) if other != fold for scan in scans),
+            "val": fold_scans[fold],
+            "test": test,
+        }
+        for fold in range(n_folds)
+    ]
+
+
+def label_counts(labels: dict[str, int], scan_ids: list[str]) -> dict[str, int]:
+    """Count the closed and open scans among ``scan_ids``."""
+    return {name: sum(labels[scan] == code for scan in scan_ids) for name, code in LABEL_CODES.items()}
 
 
 def save_b2nd(array: np.ndarray, path: str) -> None:
@@ -185,9 +259,10 @@ def main(
     crop_voxels: int = typer.Option(CROP_VOXELS, help="Side length of the crop cube in voxels."),
     resolution_mm: float = typer.Option(CROP_RESOLUTION_MM, help="Voxel size of the crop in mm."),
     seed: int = typer.Option(42, help="Seed of the patient-level split."),
+    folds: int = typer.Option(5, min=1, help="Cross-validation folds next to the fixed test set; 1 for one split."),
     overwrite: bool = typer.Option(False, help="Rewrite crops that already exist."),
 ) -> None:
-    """Export valve crops, labels and patient-level splits for GloViTa."""
+    """Export valve crops, labels and patient-level splits (a fixed test set and cross-validation folds)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     unknown = set(valves) - {valve.name for valve in VALVES}
     if unknown:
@@ -214,16 +289,25 @@ def main(
         valve_labels = {scan: label for scan, label in labels[name].items() if scan in exported}
         folder = os.path.join(output_folder, name)
         os.makedirs(folder, exist_ok=True)
+        if folds > 1:
+            splits = cross_validation_splits(valve_labels, groups, folds, seed=seed)
+        else:
+            splits = split_by_patient(valve_labels, groups, seed=seed)
         files = {
             "dataset.json": {"num_classes": 2, "subtask": "multiclass"},
             "labels.json": valve_labels,
-            "splits.json": split_by_patient(valve_labels, groups, seed=seed),
+            "splits.json": splits,
         }
         for filename, content in files.items():
             with open(os.path.join(folder, filename), "w") as file:
                 json.dump(content, file, indent=2)
-        counts = {code: sum(label == value for label in valve_labels.values()) for code, value in LABEL_CODES.items()}
-        logger.info(f"{name}: {len(valve_labels)} labelled scans {counts}")
+        logger.info(f"{name}: {len(valve_labels)} labelled scans {label_counts(valve_labels, list(valve_labels))}")
+        fold_splits = splits if isinstance(splits, list) else [splits]
+        for index, split in enumerate(fold_splits):
+            logger.info(
+                f"{name} fold {index}: train {len(split['train'])}, val {label_counts(valve_labels, split['val'])}"
+            )
+        logger.info(f"{name} test: {label_counts(valve_labels, fold_splits[0]['test'])}")
 
 
 if __name__ == "__main__":

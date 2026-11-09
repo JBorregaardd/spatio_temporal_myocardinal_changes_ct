@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "side_project" / "valve_planes"))
 
 from export_crops import (  # noqa: E402
+    cross_validation_splits,
     intensity_reference,
     read_labels,
     sample_crop,
@@ -55,10 +56,7 @@ def test_crop_has_flow_along_the_last_axis() -> None:
 def test_read_labels_skips_unclear_and_missing(tmp_path: Path) -> None:
     path = tmp_path / "labels.csv"
     path.write_text(
-        "patient_id,aortic,mitral,updated\n"
-        "S001,closed,open,t\n"
-        "S002,unclear,closed,t\n"
-        "S003,open,,t\n"
+        "patient_id,aortic,mitral,updated\n" "S001,closed,open,t\n" "S002,unclear,closed,t\n" "S003,open,,t\n"
     )
     labels = read_labels(str(path))
     assert labels["aortic"] == {"S001": 0, "S003": 1}
@@ -74,6 +72,21 @@ def test_split_keeps_patients_together_and_spreads_the_rare_class() -> None:
     patient_split = {groups[s]: name for name, part in splits.items() for s in part}
     assert all(patient_split[groups[s]] == name for name, part in splits.items() for s in part)
     assert all(any(labels[s] == 1 for s in part) for part in splits.values())
+
+
+def test_cross_validation_keeps_the_test_set_and_spreads_patients_over_folds() -> None:
+    labels = {f"S{i:03d}": int(i < 20) for i in range(60)}
+    groups = {f"S{i:03d}": f"P{i // 2}" for i in range(60)}
+    folds = cross_validation_splits(labels, groups, n_folds=5, seed=0)
+
+    assert len(folds) == 5
+    assert all(fold["test"] == split_by_patient(labels, groups, seed=0)["test"] for fold in folds)
+    rest = sorted(set(labels) - set(folds[0]["test"]))
+    assert sorted(scan for fold in folds for scan in fold["val"]) == rest
+    for fold in folds:
+        assert sorted(fold["train"] + fold["val"]) == rest
+        assert {groups[s] for s in fold["train"]}.isdisjoint(groups[s] for s in fold["val"])
+        assert {labels[s] for s in fold["val"]} == {0, 1}
 
 
 def test_b2nd_round_trip(tmp_path: Path) -> None:

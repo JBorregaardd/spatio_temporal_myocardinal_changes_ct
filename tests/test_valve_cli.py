@@ -16,25 +16,40 @@ from train_glovita import split_mirror_axes  # noqa: E402
 RUN_NAME = "20261104_124730_nnfoundationencoder_classificationhead_full_finetuning_04f53122"
 
 
-def make_run(experiments: Path, name: str, data_root_dir: str, val_aurocs: list[float], done: bool) -> Path:
-    """Write a minimal GloViTa run folder and return its fold folder."""
-    fold = experiments / "generic_3d_dataset" / name / "0"
-    (fold / "checkpoints").mkdir(parents=True)
-    (fold / "checkpoints" / "best.pt").write_bytes(b"")
+def make_run(
+    experiments: Path,
+    name: str,
+    data_root_dir: str,
+    val_values: list[float],
+    done: bool,
+    fold: str = "0",
+    cv_folds: int | None = None,
+    metric: str | None = None,
+) -> Path:
+    """Write a minimal GloViTa fold folder of run ``name`` and return it."""
+    fold_dir = experiments / "generic_3d_dataset" / name / fold
+    (fold_dir / "checkpoints").mkdir(parents=True)
+    if done:
+        (fold_dir / "checkpoints" / "best.pt").write_bytes(b"")
+    training = {"epochs": 100, **({"cv_folds": cv_folds} if cv_folds else {})}
+    if metric:
+        training["best_checkpoint_metric"] = metric
     resolved = {
         "data": {"data_root_dir": data_root_dir},
         "model": {"encoder": {"checkpoint_path": "checkpoints/nnFoundationViT/checkpoint_final.pth"}},
         "peft": {"method": "full_finetuning"},
         "optimizer": {"lr": 1e-4},
-        "training": {"epochs": 100},
+        "training": training,
         "add_log": {"note": "baseline"},
     }
-    (fold / "resolved_config.json").write_text(json.dumps(resolved))
-    val = [{"epoch": epoch, "val_AUROC": auroc} for epoch, auroc in enumerate(val_aurocs)]
-    (fold / "metrics.json").write_text(json.dumps({"train": [], "val": val}))
+    (fold_dir / "resolved_config.json").write_text(json.dumps(resolved))
+    key = metric or "val_AUROC"
+    val = [{"epoch": epoch, key: value} for epoch, value in enumerate(val_values)]
+    (fold_dir / "metrics.json").write_text(json.dumps({"train": [], "val": val}))
     if done:
-        (fold / "final_val_metrics.json").write_text(json.dumps({"final_val_F1": 0.9}))
-    return fold
+        final = {"final_val_F1": 0.9, "final_val_Balanced_Accuracy": max(val_values)}
+        (fold_dir / "final_val_metrics.json").write_text(json.dumps(final))
+    return fold_dir
 
 
 def write_predictions(path: Path, rows: list[tuple[str, int, int, float]]) -> None:
@@ -85,6 +100,7 @@ def test_build_train_args_full_run(config: dict) -> None:
     assert args[args.index("--add_log.note") + 1] == "baseline"
     assert args[args.index("--model.encoder.checkpoint_path") + 1] == config["encoders"]["vit"]
     assert "--training.train_steps_per_epoch" not in args
+    assert args[args.index("--training.cv_folds") + 1] == str(config["train"]["cv_folds"])
     assert args.index("data:generic3d_dataset_config") < args.index("model.encoder:nnfoundation_encoder_config")
     assert args[-1] == "logger:no_logger_config"
 
@@ -93,6 +109,7 @@ def test_build_train_args_smoke_linear_probe_cnn(config: dict) -> None:
     overrides = {"linear_probe": True, "encoder": "cnn"}
     args = valve.build_train_args(config, valve.train_settings(config, True, overrides), Path("crops/aortic"))
     assert args[args.index("--training.train_steps_per_epoch") + 1] == "10"
+    assert args[args.index("--training.cv_folds") + 1] == "1"
     assert args[args.index("--model.encoder.checkpoint_path") + 1] == config["encoders"]["cnn"]
     assert args[-1] == "peft:linear_probing_config"
 
@@ -107,28 +124,61 @@ def test_find_select_and_summarize_runs(tmp_path: Path, env: tuple[Path, Path]) 
     experiments = glovita_dir / "experiments"
     make_run(experiments, RUN_NAME, "/data/crops/mitral", [0.7, 0.9, 0.8], done=True)
     later = RUN_NAME.replace("124730", "150000").replace("04f53122", "aaaaaaaa")
-    make_run(experiments, later, "C:\\data\\crops\\mitral", [0.6], done=False)
+    make_run(experiments, later, "C:\\data\\crops\\mitral", [0.6], done=True)
+    unfinished = RUN_NAME.replace("124730", "160000").replace("04f53122", "cccccccc")
+    make_run(experiments, unfinished, "/data/crops/mitral", [0.6], done=False)
     make_run(experiments, RUN_NAME.replace("04f53122", "bbbbbbbb"), "/data/crops/aortic", [0.5], done=True)
 
     paths = valve.load_paths()
-    assert [run.valve for run in valve.find_runs(experiments)] == ["mitral", "aortic", "mitral"]
-    assert valve.select_run(paths, "mitral", None).name == later
-    assert valve.select_run(paths, "mitral", "04f53122").name == RUN_NAME
+    assert [run.valve for run in valve.find_runs(experiments)] == ["mitral", "aortic", "mitral", "mitral"]
+    assert valve.select_experiment(paths, "mitral", None).name == later
+    assert valve.select_experiment(paths, "mitral", "04f53122").name == RUN_NAME
 
-    summary = valve.summarize_run(valve.select_run(paths, "mitral", "04f53122"))
+    summary = valve.summarize_experiment(valve.select_experiment(paths, "mitral", "04f53122"))
     assert summary["run"] == "20261104_124730_04f53122"
-    assert (summary["encoder"], summary["best_metric"], summary["best_val"], summary["best_epoch"]) == (
+    assert (summary["encoder"], summary["best_metric"], summary["best_val_mean"], summary["best_epochs"]) == (
         "vit",
         "AUROC",
         0.9,
-        1,
+        [1],
     )
     assert (summary["epochs"], summary["status"], summary["note"]) == ("3/100", "done", "baseline")
+    assert (summary["n_folds"], summary["folds_done"], summary["best_val_spread"]) == (1, 1, 0.0)
 
 
-def test_select_run_without_runs_exits(env: tuple[Path, Path]) -> None:
+def test_summarize_cross_validation_averages_the_folds(env: tuple[Path, Path]) -> None:
+    _, glovita_dir = env
+    experiments = glovita_dir / "experiments"
+    metric = "val_Balanced_Accuracy"
+    for fold, values in enumerate([[0.5, 0.8], [0.6, 1.0], [0.9, 0.7]]):
+        make_run(experiments, RUN_NAME, "/data/crops/aortic", values, True, str(fold), cv_folds=3, metric=metric)
+
+    (experiment,) = valve.find_experiments(experiments)
+    assert [run.path.name for run in experiment.folds] == ["0", "1", "2"]
+    summary = valve.summarize_experiment(experiment)
+    assert summary["best_metric"] == "Balanced_Accuracy"
+    assert summary["best_vals"] == [0.8, 1.0, 0.9]
+    assert summary["best_epochs"] == [1, 1, 0]
+    assert summary["best_val_mean"] == pytest.approx(0.9)
+    assert summary["best_val_spread"] == pytest.approx(0.1)
+    assert summary["final_val_balanced_accuracy"] == pytest.approx(0.9)
+    assert (summary["folds_done"], summary["status"]) == (3, "done")
+
+
+def test_cli_test_refuses_unfinished_cross_validation(env: tuple[Path, Path]) -> None:
+    data_dir, glovita_dir = env
+    experiments = glovita_dir / "experiments"
+    crops = str(data_dir / "crops" / "aortic")
+    make_run(experiments, RUN_NAME, crops, [0.8], done=True, fold="0", cv_folds=5)
+    make_run(experiments, RUN_NAME, crops, [0.8], done=False, fold="1", cv_folds=5)
+    result = CliRunner().invoke(valve.app, ["test", "aortic"])
+    assert result.exit_code == 1
+    assert "Only 1 of 5 folds" in " ".join(result.output.split())
+
+
+def test_select_experiment_without_runs_exits(env: tuple[Path, Path]) -> None:
     with pytest.raises(valve.typer.Exit):
-        valve.select_run(valve.load_paths(), "mitral", None)
+        valve.select_experiment(valve.load_paths(), "mitral", None)
 
 
 def test_compute_metrics_worked_example() -> None:
@@ -150,6 +200,31 @@ def test_split_counts(tmp_path: Path) -> None:
     (tmp_path / "splits.json").write_text(json.dumps({"train": ["S1", "S2"], "val": ["S3"], "test": []}))
     counts = valve.split_counts(tmp_path)
     assert (counts["train"][0], counts["train"][1], counts["val"][1], sum(counts["test"].values())) == (1, 1, 1, 0)
+
+
+def test_split_counts_of_a_fold(tmp_path: Path) -> None:
+    (tmp_path / "labels.json").write_text(json.dumps({"S1": 0, "S2": 1, "S3": 1}))
+    folds = [{"train": ["S1"], "val": ["S2"], "test": ["S3"]}, {"train": ["S2"], "val": ["S1"], "test": ["S3"]}]
+    (tmp_path / "splits.json").write_text(json.dumps(folds))
+    assert len(valve.read_splits(tmp_path)) == 2
+    assert valve.split_counts(tmp_path, fold=1)["val"] == {0: 1}
+
+
+def test_cli_train_stops_when_splits_have_too_few_folds(env: tuple[Path, Path], config: dict) -> None:
+    data_dir, glovita_dir = env
+    python = glovita_dir / ".venv" / ("Scripts/python.exe" if valve.os.name == "nt" else "bin/python")
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    weights = glovita_dir / config["encoders"]["vit"]
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"")
+    crops = data_dir / "crops" / "aortic"
+    crops.mkdir(parents=True)
+    (crops / "dataset.json").write_text("{}")
+    (crops / "splits.json").write_text(json.dumps({"train": [], "val": [], "test": []}))
+    result = CliRunner().invoke(valve.app, ["train", "aortic", "--folds", "5"])
+    assert result.exit_code == 1
+    assert "--folds 5" in " ".join(result.output.split())
 
 
 def test_cli_train_dry_run_prints_the_command(env: tuple[Path, Path]) -> None:
@@ -242,4 +317,18 @@ def test_cli_plots_writes_all_figures(env: tuple[Path, Path]) -> None:
     result = CliRunner().invoke(valve.app, ["plots", "mitral"])
     assert result.exit_code == 0, result.output
     for name in ("training_curves.png", "confusion_matrix.png", "misclassified_scans.png"):
-        assert (fold / "plots" / name).stat().st_size > 0
+        assert (fold.parent / "plots" / name).stat().st_size > 0
+
+
+def test_cli_plots_writes_one_curve_per_fold(env: tuple[Path, Path]) -> None:
+    data_dir, glovita_dir = env
+    crops = str(data_dir / "crops" / "aortic")
+    for fold in ("0", "1"):
+        make_run(glovita_dir / "experiments", RUN_NAME, crops, [0.6, 0.9], True, fold, cv_folds=2)
+    result = CliRunner().invoke(valve.app, ["plots", "aortic"])
+    assert result.exit_code == 0, result.output
+    plots = glovita_dir / "experiments" / "generic_3d_dataset" / RUN_NAME / "plots"
+    assert sorted(path.name for path in plots.glob("*.png")) == [
+        "training_curves_fold0.png",
+        "training_curves_fold1.png",
+    ]

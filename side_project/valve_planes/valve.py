@@ -14,7 +14,7 @@ never re-synced away and an active conda environment does not matter. Examples:
     uv run side_project/valve_planes/valve.py train mitral --lr 1e-5 --note "lower lr"
     uv run side_project/valve_planes/valve.py logs mitral
     uv run side_project/valve_planes/valve.py runs
-    uv run side_project/valve_planes/valve.py test mitral
+    uv run side_project/valve_planes/valve.py test mitral          # ensemble of the fold models on the test set
     uv run side_project/valve_planes/valve.py errors mitral
     uv run side_project/valve_planes/valve.py plots mitral
 """
@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shlex
+import statistics
 import subprocess
 import sys
 import time
@@ -125,12 +126,78 @@ class Run:
     @property
     def short_name(self) -> str:
         """Start time and unique id of the run, e.g. ``20261104_124730_04f53122``."""
-        return f"{self.name[:15]}_{self.name[-8:]}" if len(self.name) > 24 else self.name
+        return short_run_name(self.name)
 
     @property
     def group_dir(self) -> Path:
         """Run folder holding the fold folders, as expected by ``glovita_infer --exp_dir``."""
         return self.path.parent
+
+    @property
+    def trained(self) -> bool:
+        """Whether the fold has a best checkpoint."""
+        return (self.path / "checkpoints" / "best.pt").exists()
+
+
+@dataclass(frozen=True)
+class Experiment:
+    """One GloViTa run folder with its fold runs: ``cv_folds`` folds with cross-validation, otherwise one."""
+
+    path: Path
+    valve: str
+    folds: tuple[Run, ...]
+
+    @property
+    def name(self) -> str:
+        """Run folder name, starting with the start time (``YYYYmmdd_HHMMSS``)."""
+        return self.path.name
+
+    @property
+    def short_name(self) -> str:
+        """Start time and unique id of the run, e.g. ``20261104_124730_04f53122``."""
+        return short_run_name(self.name)
+
+    @property
+    def resolved(self) -> dict[str, Any]:
+        """Resolved GloViTa config of the first fold (the settings are the same for all folds)."""
+        return self.folds[0].resolved
+
+    @property
+    def n_folds(self) -> int:
+        """Number of folds the run trains (``training.cv_folds``)."""
+        return int(self.resolved.get("training", {}).get("cv_folds") or 1)
+
+    @property
+    def trained_folds(self) -> list[Run]:
+        """Folds with a best checkpoint."""
+        return [run for run in self.folds if run.trained]
+
+    def output(self, filename: str) -> Path:
+        """Return where a test output of the run lives, in the run folder.
+
+        Runs tested before cross-validation was added keep their outputs in the fold folder; those are found too.
+
+        Args:
+            filename: File name, e.g. ``test_metrics.json``.
+
+        Returns:
+            The path, which may not exist yet.
+        """
+        path = self.path / filename
+        legacy = self.folds[0].path / filename
+        return legacy if not path.exists() and len(self.folds) == 1 and legacy.exists() else path
+
+
+def short_run_name(name: str) -> str:
+    """Shorten a GloViTa run folder name to its start time and unique id.
+
+    Args:
+        name: Run folder name, e.g. ``20261104_124730_nnfoundationencoder_..._04f53122``.
+
+    Returns:
+        E.g. ``20261104_124730_04f53122``; short names are returned unchanged.
+    """
+    return f"{name[:15]}_{name[-8:]}" if len(name) > 24 else name
 
 
 def load_paths() -> Paths:
@@ -208,6 +275,7 @@ def build_train_args(config: dict[str, Any], settings: dict[str, Any], crops_dir
         "--training.epochs", str(settings["epochs"]),
         "--training.precision", str(settings["precision"]),
         "--training.seed", str(settings["seed"]),
+        "--training.cv_folds", str(settings.get("cv_folds") or 1),
         "--training.best_checkpoint_metric", str(settings["best_checkpoint_metric"]),
     ]  # fmt: skip
     for key in ("train_steps_per_epoch", "val_steps_per_epoch"):
@@ -258,8 +326,24 @@ def find_runs(experiments_dir: Path, valve: Optional[str] = None) -> list[Run]:
     return sorted(runs, key=lambda run: (run.name, run.path.name))
 
 
-def select_run(paths: Paths, valve: str, name: Optional[str]) -> Run:
-    """Return the run called ``name`` (or the latest run of the valve) that has a best checkpoint.
+def find_experiments(experiments_dir: Path, valve: Optional[str] = None) -> list[Experiment]:
+    """Group the runs of ``find_runs`` by run folder, oldest first.
+
+    Args:
+        experiments_dir: GloViTa experiments folder.
+        valve: Only return runs of this valve.
+
+    Returns:
+        One experiment per run folder, its folds in fold order.
+    """
+    grouped: dict[Path, list[Run]] = {}
+    for run in find_runs(experiments_dir, valve):
+        grouped.setdefault(run.group_dir, []).append(run)
+    return [Experiment(path=path, valve=folds[0].valve, folds=tuple(folds)) for path, folds in grouped.items()]
+
+
+def select_experiment(paths: Paths, valve: str, name: Optional[str]) -> Experiment:
+    """Return the run called ``name`` (or the latest run of the valve) with at least one trained fold.
 
     Args:
         paths: Data and GloViTa locations.
@@ -272,13 +356,15 @@ def select_run(paths: Paths, valve: str, name: Optional[str]) -> Run:
     Raises:
         typer.Exit: If no run matches.
     """
-    runs = [run for run in find_runs(paths.experiments_dir, valve) if (run.path / "checkpoints" / "best.pt").exists()]
+    experiments = [
+        experiment for experiment in find_experiments(paths.experiments_dir, valve) if experiment.trained_folds
+    ]
     if name is not None:
-        runs = [run for run in runs if name in run.name]
-    if not runs:
+        experiments = [experiment for experiment in experiments if name in experiment.name]
+    if not experiments:
         console.print(f"[red]No {valve} run with a best checkpoint{f' matching {name!r}' if name else ''}.[/red]")
         raise typer.Exit(1)
-    return runs[-1]
+    return experiments[-1]
 
 
 def read_json(path: Path) -> Optional[dict[str, Any]]:
@@ -294,13 +380,13 @@ def read_json(path: Path) -> Optional[dict[str, Any]]:
 
 
 def summarize_run(run: Run) -> dict[str, Any]:
-    """Collect the settings and results of a run for the ``runs`` table.
+    """Collect the settings and validation results of one fold run.
 
     Args:
-        run: The run.
+        run: The fold run.
 
     Returns:
-        Dict with the run name, settings, progress and validation and test metrics.
+        Dict with the run name, settings, progress and validation metrics of the fold.
     """
     resolved = run.resolved
     checkpoint = str(resolved.get("model", {}).get("encoder", {}).get("checkpoint_path", ""))
@@ -322,8 +408,56 @@ def summarize_run(run: Run) -> dict[str, Any]:
         "best_val": best[best_metric] if best else None,
         "best_epoch": best["epoch"] if best else None,
         "final_val": final,
-        "test": read_json(run.path / "test_metrics.json"),
         "note": (resolved.get("add_log") or {}).get("note", ""),
+    }
+
+
+def mean_and_spread(values: list[float]) -> tuple[Optional[float], Optional[float]]:
+    """Return the mean and sample standard deviation of the values (0 for one value, ``None`` for none)."""
+    if not values:
+        return None, None
+    return statistics.mean(values), statistics.stdev(values) if len(values) > 1 else 0.0
+
+
+def summarize_experiment(experiment: Experiment) -> dict[str, Any]:
+    """Collect the settings and results of a run over its folds for the ``runs`` table.
+
+    The validation metrics are averaged over the folds that finished; each fold is scored on its own validation
+    patients with its best checkpoint, so together they are the cross-validation estimate.
+
+    Args:
+        experiment: The run.
+
+    Returns:
+        Dict with the run name, settings, progress, the per-fold best validation values with their mean and spread,
+        the mean final validation F1 and balanced accuracy, and the test metrics.
+    """
+    folds = [summarize_run(run) for run in experiment.folds]
+    first = folds[0]
+    best_values = [fold["best_val"] for fold in folds if fold["best_val"] is not None]
+    finals = [fold["final_val"] for fold in folds if fold["final_val"]]
+    best_mean, best_spread = mean_and_spread(best_values)
+    return {
+        "run": experiment.short_name,
+        "valve": experiment.valve,
+        "encoder": first["encoder"],
+        "peft": first["peft"],
+        "lr": first["lr"],
+        "n_folds": experiment.n_folds,
+        "folds_done": len(finals),
+        "epochs": folds[-1]["epochs"],
+        "status": "done" if len(finals) >= experiment.n_folds else "running or stopped",
+        "best_metric": first["best_metric"],
+        "best_vals": best_values,
+        "best_epochs": [fold["best_epoch"] for fold in folds],
+        "best_val_mean": best_mean,
+        "best_val_spread": best_spread,
+        "final_val_f1": mean_and_spread([final["final_val_F1"] for final in finals if "final_val_F1" in final])[0],
+        "final_val_balanced_accuracy": mean_and_spread(
+            [final["final_val_Balanced_Accuracy"] for final in finals if "final_val_Balanced_Accuracy" in final]
+        )[0],
+        "test": read_json(experiment.output("test_metrics.json")),
+        "note": first["note"],
     }
 
 
@@ -376,19 +510,31 @@ def read_predictions(path: Path) -> list[dict[str, Any]]:
         ]
 
 
-def split_counts(crops_dir: Path) -> dict[str, Counter]:
-    """Count the closed and open scans per split of a valve dataset.
+def read_splits(crops_dir: Path) -> list[dict[str, list[str]]]:
+    """Read the folds of ``splits.json``; a single ``{"train", "val", "test"}`` split is returned as one fold.
+
+    Args:
+        crops_dir: GloViTa dataset folder with ``splits.json``.
+
+    Returns:
+        One ``{split: [scan ids]}`` dict per fold.
+    """
+    splits = json.loads((crops_dir / "splits.json").read_text())
+    return splits if isinstance(splits, list) else [splits]
+
+
+def split_counts(crops_dir: Path, fold: int = 0) -> dict[str, Counter]:
+    """Count the closed and open scans per split of one fold of a valve dataset.
 
     Args:
         crops_dir: GloViTa dataset folder with ``labels.json`` and ``splits.json``.
+        fold: Fold index.
 
     Returns:
         ``{split: Counter({label: count})}``.
     """
     labels = json.loads((crops_dir / "labels.json").read_text())
-    splits = json.loads((crops_dir / "splits.json").read_text())
-    if isinstance(splits, list):
-        splits = splits[0]
+    splits = read_splits(crops_dir)[fold]
     return {split: Counter(labels[case_id] for case_id in splits.get(split, [])) for split in SPLITS}
 
 
@@ -488,6 +634,13 @@ def start_training(valve: Valve, smoke: bool, foreground: bool, dry_run: bool, o
     require(paths.python, "Set up GloViTa first (REMOTE_TRAINING.md, step 3).")
     require(crops_dir / "dataset.json", "Export the crops first (REMOTE_TRAINING.md, step 2).")
     require(paths.glovita_dir / config["encoders"][settings["encoder"]], "Download the pretrained weights (step 3).")
+    n_folds, n_split_folds = int(settings.get("cv_folds") or 1), len(read_splits(crops_dir))
+    if n_folds > n_split_folds:
+        console.print(
+            f"[red]cv_folds is {n_folds} but {crops_dir / 'splits.json'} has {n_split_folds} fold(s).[/red]\n"
+            f"  Export the crops again with `export_crops.py ... --folds {n_folds}` (REMOTE_TRAINING.md, step 2)."
+        )
+        raise typer.Exit(1)
     if foreground:
         code = launch(command, paths.glovita_dir, None)
         if code:
@@ -504,6 +657,7 @@ def train(
     valve: Valve = typer.Argument(..., help="Valve to train on."),
     lr: Optional[float] = typer.Option(None, help="Learning rate."),
     epochs: Optional[int] = typer.Option(None, help="Number of epochs."),
+    folds: Optional[int] = typer.Option(None, min=1, help="Cross-validation folds to train (cv_folds)."),
     batch_size: Optional[int] = typer.Option(None, help="Batch size."),
     encoder: Optional[Encoder] = typer.Option(None, help="Pretrained encoder."),
     linear_probe: Optional[bool] = typer.Option(
@@ -518,6 +672,7 @@ def train(
     overrides = {
         "lr": lr,
         "epochs": epochs,
+        "cv_folds": folds,
         "batch_size": batch_size,
         "encoder": encoder.value if encoder else None,
         "linear_probe": linear_probe,
@@ -570,28 +725,32 @@ def logs(
 
 @app.command()
 def runs(valve: Optional[Valve] = typer.Argument(None, help="Only show runs of this valve.")) -> None:
-    """List all training runs with their settings and validation (and test) metrics."""
+    """List all training runs with their settings, validation metrics (mean ± SD over the folds) and test metrics."""
     paths = load_paths()
-    summaries = [summarize_run(run) for run in find_runs(paths.experiments_dir, valve.value if valve else None)]
-    if not summaries:
+    experiments = find_experiments(paths.experiments_dir, valve.value if valve else None)
+    if not experiments:
         console.print(f"No runs in {paths.experiments_dir}.")
         return
-    table = Table("run", "valve", "encoder", "peft", "lr", "epochs", "best val (epoch)", "final val F1 / bal acc")
+    table = Table("run", "valve", "encoder", "peft", "lr", "folds", "epochs", "best val", "final val F1 / bal acc")
     table.add_column("test F1 / AUROC")
     table.add_column("note")
-    for summary in summaries:
-        final = summary["final_val"] or {}
+    for summary in map(summarize_experiment, experiments):
         test = summary["test"] or {}
-        best = f"{summary['best_metric']} {format_metric(summary['best_val'])}"
+        best = f"{summary['best_metric']} {format_metric(summary['best_val_mean'])}"
+        if summary["n_folds"] > 1 and summary["best_val_spread"] is not None:
+            best += f" ± {summary['best_val_spread']:.3f}"
+        elif summary["best_epochs"][0] is not None:
+            best += f" (epoch {summary['best_epochs'][0]})"
         table.add_row(
             summary["run"],
             summary["valve"],
             summary["encoder"],
             summary["peft"],
             f"{summary['lr']:g}" if summary["lr"] is not None else "-",
+            f"{summary['folds_done']}/{summary['n_folds']}",
             summary["epochs"],
-            f"{best} ({summary['best_epoch']})" if summary["best_epoch"] is not None else best,
-            f"{format_metric(final.get('final_val_F1'))} / {format_metric(final.get('final_val_Balanced_Accuracy'))}",
+            best,
+            f"{format_metric(summary['final_val_f1'])} / {format_metric(summary['final_val_balanced_accuracy'])}",
             f"{format_metric(test.get('f1_macro'))} / {format_metric(test.get('auroc'))}" if test else "-",
             str(summary["note"]),
         )
@@ -604,19 +763,31 @@ def test(
     run: Optional[str] = typer.Option(None, help="Run folder name or a unique part of it; default: the latest run."),
     force: bool = typer.Option(False, help="Evaluate again even if the run was already tested."),
 ) -> None:
-    """Evaluate the best checkpoint of a run on the test split, once the settings are final."""
+    """Evaluate a run on the test split, once the settings are final.
+
+    With cross-validation the best checkpoints of all folds are applied and their probabilities averaged.
+    """
     paths = load_paths()
-    selected = select_run(paths, valve.value, run)
-    metrics_path = selected.path / "test_metrics.json"
+    selected = select_experiment(paths, valve.value, run)
+    trained = selected.trained_folds
+    if len(trained) < selected.n_folds:
+        console.print(
+            f"[red]Only {len(trained)} of {selected.n_folds} folds of {selected.name} have a best checkpoint.[/red]\n"
+            "  Wait until training has finished."
+        )
+        raise typer.Exit(1)
+    metrics_path = selected.output("test_metrics.json")
     console.print(f"Run: {selected.name}")
+    if len(trained) > 1:
+        console.print(f"Ensemble of {len(trained)} fold models (mean of their predicted probabilities)")
     if metrics_path.exists() and not force:
         print_metrics("Test results (already evaluated; --force to run again)", json.loads(metrics_path.read_text()))
         return
-    pred_path = selected.path / "test_predictions.pt"
-    csv_path = selected.path / "test_predictions.csv"
+    pred_path = selected.output("test_predictions.pt")
+    csv_path = selected.output("test_predictions.csv")
     infer = [
         str(paths.python), "-c", INFER_ENTRY,
-        "--exp_dir", str(selected.group_dir), "--checkpoint", "best", "--metrics", "acc", "f1",
+        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
         "--pred_output", str(pred_path),
         "data:generic3d_dataset_config", "--data.data_root_dir", str(paths.crops(valve.value)),
     ]  # fmt: skip
@@ -641,8 +812,8 @@ def errors(
 ) -> None:
     """List the misclassified test scans of a run, sorted by predicted probability of open."""
     paths = load_paths()
-    selected = select_run(paths, valve.value, run)
-    csv_path = selected.path / "test_predictions.csv"
+    selected = select_experiment(paths, valve.value, run)
+    csv_path = selected.output("test_predictions.csv")
     require(csv_path, f"Run `valve.py test {valve.value}` first.")
     rows = sorted(read_predictions(csv_path), key=lambda row: row["p_open"])
     key = load_blinded_key(paths) if show_phase else {}
@@ -726,8 +897,8 @@ def plots(
     import valve_plots as figures
 
     paths = load_paths()
-    selected = select_run(paths, valve.value, run)
-    summary = summarize_run(selected)
+    selected = select_experiment(paths, valve.value, run)
+    summary = summarize_experiment(selected)
     out_dir = selected.path / "plots"
     out_dir.mkdir(exist_ok=True)
     settings = f"{summary['encoder']} {summary['peft'].replace('_', ' ')}, lr {summary['lr']:g}, run {summary['run']}"
@@ -735,15 +906,21 @@ def plots(
         settings += f" ({summary['note']})"
     written = []
 
-    history = read_json(selected.path / "metrics.json") or {}
     best_metric = selected.resolved.get("training", {}).get("best_checkpoint_metric") or "val_AUROC"
-    curves_path = out_dir / "training_curves.png"
-    figures.plot_training_curves(
-        history, best_metric, f"{valve.value.capitalize()} valve: training", settings, curves_path
-    )
-    written.append(curves_path)
+    cross_validated = selected.n_folds > 1
+    for fold in selected.folds:
+        history = read_json(fold.path / "metrics.json")
+        if history is None:
+            continue
+        title = f"{valve.value.capitalize()} valve: training"
+        curves_path = out_dir / "training_curves.png"
+        if cross_validated:
+            title += f", fold {fold.path.name} of {selected.n_folds}"
+            curves_path = out_dir / f"training_curves_fold{fold.path.name}.png"
+        figures.plot_training_curves(history, best_metric, title, settings, curves_path)
+        written.append(curves_path)
 
-    csv_path = selected.path / "test_predictions.csv"
+    csv_path = selected.output("test_predictions.csv")
     if not csv_path.exists():
         console.print(
             f"[yellow]No test predictions yet; run `valve.py test {valve.value}` for the other plots.[/yellow]"
@@ -817,9 +994,15 @@ def check() -> None:
         files = [crops_dir / name for name in ("dataset.json", "labels.json", "splits.json")]
         report(all(file.exists() for file in files), f"{valve.value} crops    {crops_dir}")
         if all(file.exists() for file in files):
-            counts = split_counts(crops_dir)
-            summary = ", ".join(f"{split} {counts[split][0]} closed / {counts[split][1]} open" for split in SPLITS)
-            console.print(f"       {summary}")
+            n_split_folds, n_folds = len(read_splits(crops_dir)), int(config["train"].get("cv_folds") or 1)
+            report(n_split_folds >= n_folds, f"{valve.value} splits   {n_split_folds} fold(s), cv_folds {n_folds}")
+            for fold in range(n_split_folds):
+                counts = split_counts(crops_dir, fold)
+                shown = SPLITS if fold == 0 else ("train", "val")
+                summary = ", ".join(f"{split} {counts[split][0]} closed / {counts[split][1]} open" for split in shown)
+                console.print(f"       fold {fold}: {summary}")
+                if len(counts["val"]) < 2:
+                    console.print(f"       [yellow]fold {fold} validates on one class only[/yellow]")
     if not ok:
         raise typer.Exit(1)
 

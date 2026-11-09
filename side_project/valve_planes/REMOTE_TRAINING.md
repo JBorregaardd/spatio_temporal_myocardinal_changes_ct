@@ -59,8 +59,9 @@ cd ~/spatio_temporal_myocardinal_changes_ct
 uv run side_project/valve_planes/export_crops.py /data/Data/JERI/data/CGPS10_ED_ES/valve_planes /data/Data/JERI/data/CGPS10_ED_ES/crops --key-path /data/Data/JERI/data/CGPS10_ED_ES/blinded_key.csv
 ```
 
-The script ends with a line per valve such as `mitral: 160 labelled scans {'closed': 70, 'open': 90}`. Write these
-counts down; they decide whether the training makes sense (see "What to watch out for").
+The script ends with a line per valve such as `mitral: 160 labelled scans {'closed': 70, 'open': 90}`, followed by the
+closed/open counts of the validation part of each fold and of the test set. Write these counts down; they decide whether
+the training makes sense (see "What to watch out for").
 
 Output:
 
@@ -68,7 +69,7 @@ Output:
 /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/images/S001.b2nd   float32 array, shape (1, 96, 96, 96)
 /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/dataset.json       {"num_classes": 2, "subtask": "multiclass"}
 /data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/labels.json        {"S001": 1, ...}   0 = closed, 1 = open
-/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/splits.json        {"train": [...], "val": [...], "test": [...]}
+/data/Data/JERI/data/CGPS10_ED_ES/crops/mitral/splits.json        [{"train": [...], "val": [...], "test": [...]}, ...]  one per fold
 /data/Data/JERI/data/CGPS10_ED_ES/crops/aortic/...                the same for the aortic valve
 ```
 
@@ -104,16 +105,24 @@ between.
 - The phase (ED/ES) is not used anywhere. It is only in `blinded_key.csv`, which is read solely to know which scans
   belong to the same patient.
 
-### Train / validation / test split
+### Test set and 5-fold cross-validation
 
-- **60 % train, 20 % validation, 20 % test**, by patient. Images were drawn independently from the ED and ES lists, so
-  some patients have two scans. Both scans of such a patient always land in the same split; otherwise the model could
-  recognise the patient rather than the valve state, and the test score would be too optimistic.
-- **Stratified**: patients are grouped by their set of labels (only closed, only open, or one of each) and every group
-  is split 60/20/20 separately, so the open/closed ratio is about the same in all three splits.
-- **Fixed seed** (`--seed`, default 42): rerunning the export gives the same split.
-- **Validation** is used during training to pick the best checkpoint. **Test** is not touched during training; it is
-  evaluated once at the end (step 6).
+- **20 % test, by patient**, held out once and shared by all folds. Images were drawn independently from the ED and ES
+  lists, so some patients have two scans. Both scans of such a patient always land in the same part; otherwise the model
+  could recognise the patient rather than the valve state, and the scores would be too optimistic.
+- **The other 80 % is split into 5 folds** (`--folds`, default 5). Fold `k` trains on the patients of the other four
+  folds and validates on its own, so every non-test scan is used for validation exactly once. `--folds 1` writes the
+  older single 60/20/20 train/validation/test split instead.
+- **Why cross-validation**: the dataset is small, so one validation split of ~15–30 scans gives a noisy number, where
+  one or two scans move balanced accuracy by about 0.05. Five folds give the mean and spread over all non-test scans,
+  which is the validation result to report. It does not make a single model better; the gain on the test set comes from
+  averaging the five fold models (step 6).
+- **Stratified**: patients are grouped by their set of labels (only closed, only open, or one of each), and every group
+  is cut and dealt over the folds separately, so the open/closed ratio is about the same in the test set and every fold.
+- **Fixed seed** (`--seed`, default 42): rerunning the export gives the same split. With the same seed, the test set is
+  exactly the one of the older single split, so test results stay comparable.
+- **Validation** is used during training to pick each fold's best checkpoint. **Test** is not touched during training;
+  it is evaluated once at the end (step 6).
 
 ## Step 3: Set up GloViTa (once)
 
@@ -166,9 +175,10 @@ uv run side_project/valve_planes/valve.py check
 uv run side_project/valve_planes/valve.py smoke mitral
 ```
 
-- `check` verifies the paths, that GloViTa's torch sees the GPU, that the pretrained weights are downloaded, and prints
-  the closed/open counts per split for both valves.
-- `smoke` trains 2 short epochs in the terminal (the `smoke` section of `valve_config.yaml`).
+- `check` verifies the paths, that GloViTa's torch sees the GPU, that the pretrained weights are downloaded, that
+  `splits.json` has at least `cv_folds` folds, and prints the closed/open counts of the test set and of every fold. It
+  warns about a fold whose validation part holds only one class.
+- `smoke` trains 2 short epochs of fold 0 only in the terminal (the `smoke` section of `valve_config.yaml`).
 - While it runs, check the memory use in a second terminal with `nvidia-smi`. If it is far below 32 GB, the batch size
   can be raised (`batch_size` in `valve_config.yaml`, or `--batch-size` for one run).
 - Every command has `--help`, and `train`/`smoke` accept `--dry-run` to only print the GloViTa command.
@@ -195,23 +205,29 @@ uv run side_project/valve_planes/valve.py runs              # all runs with sett
 
 - `train` starts in the background and keeps running after logging out. The log is written to
   `~/image_classification/valve_logs/`. Add `--foreground` to run in the terminal instead.
+- One `train` trains all 5 folds one after another (`cv_folds` in `valve_config.yaml`), so it takes about 5 times as
+  long as one model. `--folds 1` trains fold 0 only, e.g. for a quick look.
 - Start with the **mitral** valve, then `train aortic`.
 - Settings come from `valve_config.yaml`. To try something for one run, override it on the command line and add a note
-  that `runs` shows, e.g. `train mitral --lr 1e-5 --note "lower lr"`. Options: `--lr`, `--epochs`, `--batch-size`,
-  `--encoder vit|cnn`, `--linear-probe`, `--precision`.
+  that `runs` shows, e.g. `train mitral --lr 1e-5 --note "lower lr"`. Options: `--lr`, `--epochs`, `--folds`,
+  `--batch-size`, `--encoder vit|cnn`, `--linear-probe`, `--precision`.
 - `bf16` is the GloViTa default and is more stable than `fp16` on the 5090; the local RTX 2070 needs `--precision fp16`.
 - Each epoch is one pass over the training set.
-- **The best checkpoint is chosen by validation AUROC**, not accuracy: AUROC does not depend on a decision threshold
-  and stays meaningful when the classes are unbalanced. There is no early stopping; the best checkpoint has the same
-  effect.
+- **The best checkpoint is chosen by validation balanced accuracy**, separately in each fold. Not AUROC: AUROC ignores
+  the decision threshold, so a model that ranks the validation scans correctly but calls them all closed already scores
+  1.0. That happened in the first aortic run at epoch 1, and as GloViTa only replaces the best checkpoint on a strictly
+  higher value, that useless checkpoint was kept. Validation loss would be smoother, but GloViTa can only select on its
+  logged metrics. There is no early stopping; the best checkpoint has the same effect.
 - Full fine-tuning (the GloViTa default) updates all weights. With only ~100 training scans this can overfit. If
-  validation AUROC rises in the first epochs and then falls, compare with `--linear-probe`, which only trains the
-  classification head on top of the frozen pretrained encoder.
+  validation balanced accuracy rises in the first epochs and then falls, compare with `--linear-probe`, which only
+  trains the classification head on top of the frozen pretrained encoder.
 - The number of epochs and the learning rate are reasonable starting points, not tuned values. Compare settings on
   validation (`runs`), never on the test split.
 
-Results land in `~/image_classification/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../0/`:
-`metrics.json` (per epoch), `final_val_metrics.json`, `checkpoints/` and the full `resolved_config.json`.
+Results land in `~/image_classification/experiments/generic_3d_dataset/<timestamp>_nnfoundationencoder_.../`, with one
+folder per fold (`0/` … `4/`) holding `metrics.json` (per epoch), `final_val_metrics.json` (the best checkpoint on that
+fold's validation patients), `checkpoints/` and the full `resolved_config.json`. `runs` shows one row per run with the
+mean ± standard deviation of the folds' best validation values and the mean final F1 and balanced accuracy.
 
 ## Step 6: Evaluate on the test split
 
@@ -222,10 +238,14 @@ uv run side_project/valve_planes/valve.py test mitral
 uv run side_project/valve_planes/valve.py errors mitral
 ```
 
-- `test` evaluates the best checkpoint of the latest mitral run (`--run <part of the run name>` for another run) and
-  prints accuracy, balanced accuracy, macro F1, AUROC and the confusion matrix. It saves `test_metrics.json`,
-  `test_predictions.pt` and `test_predictions.csv` in the run folder. A run that was already tested shows its stored
-  results instead of evaluating again (`--force` to override), so the test split is not used by accident.
+- `test` evaluates the latest mitral run (`--run <part of the run name>` for another run) and prints accuracy, balanced
+  accuracy, macro F1, AUROC and the confusion matrix. It saves `test_metrics.json`, `test_predictions.pt` and
+  `test_predictions.csv` in the run folder. A run that was already tested shows its stored results instead of
+  evaluating again (`--force` to override), so the test split is not used by accident.
+- **Ensemble of the folds**: every fold's best checkpoint predicts P(open) for each test scan, and the five
+  probabilities are averaged; the scan is called open when the mean is above 0.5 (GloViTa's `infer` does this when
+  given the run folder). Each fold model learned from a slightly different 80 % of the patients, so their errors partly
+  cancel. `test` refuses to run before all folds have a best checkpoint.
 - `glovita_infer` itself only computes accuracy and F1 and ignores `balanced_acc` and `auroc`; `valve.py test`
   therefore computes all metrics from the saved per-scan predictions.
 - `errors` lists the misclassified test scans sorted by predicted probability of open (`--all` for every scan). A
@@ -240,10 +260,11 @@ uv run side_project/valve_planes/valve.py errors mitral
 uv run side_project/valve_planes/valve.py plots mitral
 ```
 
-Writes PNGs to `<run folder>/0/plots/` (open them in VS Code over SSH):
+Writes PNGs to `<run folder>/plots/` (open them in VS Code over SSH):
 
-- `training_curves.png`: train and validation loss per epoch, and below it validation AUROC, balanced accuracy and F1,
-  with the best checkpoint marked. Works during and after training, before `test`.
+- `training_curves_fold<k>.png`, one per fold (`training_curves.png` without cross-validation): train and validation
+  loss per epoch, and below it validation AUROC, balanced accuracy and F1, with the best checkpoint marked. Works during
+  and after training, before `test`.
 - `confusion_matrix.png`: the test confusion matrix with counts and the share of each true class (after `test`).
 - `misclassified_scans.png`: one row per misclassified test scan with the three labelling views (as shown in
   `label_valves.py`) and the same three central slices of the 3D crop the model saw, plus the manual label, the
@@ -258,7 +279,8 @@ so they look slightly noisier.
 ## What to watch out for
 
 - **Class balance**: look at the counts from step 2. If one class has fewer than ~20 scans, the test split holds only
-  ~4 of them, and its metrics are mostly noise. Report AUROC and balanced accuracy, not plain accuracy.
+  ~4 of them, and its metrics are mostly noise. Report balanced accuracy and macro F1 (and AUROC next to them), not
+  plain accuracy.
 - **A model that always predicts one class** has a balanced accuracy of 0.5. That is what the 2-epoch local smoke test
   on ImageCAS did, as expected with 2 open aortic valves out of 195.
 - **Phase as a shortcut**: open/closed correlates with phase (aortic open in ES, mitral open in ED), and the ES scans
