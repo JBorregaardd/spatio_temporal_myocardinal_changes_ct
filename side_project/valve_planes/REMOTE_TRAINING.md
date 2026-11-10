@@ -209,8 +209,8 @@ uv run side_project/valve_planes/valve.py runs              # all runs with sett
   long as one model. `--folds 1` trains fold 0 only, e.g. for a quick look.
 - Start with the **mitral** valve, then `train aortic`.
 - Settings come from `valve_config.yaml`. To try something for one run, override it on the command line and add a note
-  that `runs` shows, e.g. `train mitral --lr 1e-5 --note "lower lr"`. Options: `--lr`, `--epochs`, `--folds`,
-  `--batch-size`, `--encoder vit|cnn`, `--linear-probe`, `--precision`.
+  that `runs` shows, e.g. `train mitral --lr 1e-5 --note "lower lr"`. Options: `--lr`, `--epochs`, `--head-dropout`,
+  `--folds`, `--batch-size`, `--encoder vit|cnn`, `--linear-probe`, `--precision`.
 - `bf16` is the GloViTa default and is more stable than `fp16` on the 5090; the local RTX 2070 needs `--precision fp16`.
 - Each epoch is one pass over the training set.
 - **The best checkpoint is chosen by validation balanced accuracy**, separately in each fold. Not AUROC: AUROC ignores
@@ -220,7 +220,8 @@ uv run side_project/valve_planes/valve.py runs              # all runs with sett
   logged metrics. There is no early stopping; the best checkpoint has the same effect.
 - Full fine-tuning (the GloViTa default) updates all weights. With only ~100 training scans this can overfit. If
   validation balanced accuracy rises in the first epochs and then falls, compare with `--linear-probe`, which only
-  trains the classification head on top of the frozen pretrained encoder.
+  trains the classification head on top of the frozen pretrained encoder. The head also applies dropout before the
+  classifier (`head_dropout`, 0.1 by default; `--head-dropout 0` turns it off).
 - The number of epochs and the learning rate are reasonable starting points, not tuned values. Compare settings on
   validation (`runs`), never on the test split.
 

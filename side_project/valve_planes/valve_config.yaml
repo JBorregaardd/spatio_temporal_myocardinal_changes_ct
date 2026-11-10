@@ -22,6 +22,7 @@ train:
   epochs: 100
   lr: 1.0e-4                       # write floats with a dot (1.0e-4); YAML reads 1e-4 as text
   weight_decay: 0.01
+  head_dropout: 0.1                # dropout before the classifier in the classification head, against overfitting
   warmup_epochs: 5
   batch_size: 2
   num_workers: 8

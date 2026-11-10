@@ -126,6 +126,8 @@ def test_build_train_args_full_run(config: dict) -> None:
     assert args[args.index("--model.encoder.checkpoint_path") + 1] == config["encoders"]["vit"]
     assert "--training.train_steps_per_epoch" not in args
     assert args[args.index("--training.cv_folds") + 1] == str(config["train"]["cv_folds"])
+    assert args[args.index("--model.head.dropout") + 1] == str(float(config["train"]["head_dropout"]))
+    assert args.index("model.head:classification_head_config") < args.index("--model.head.dropout")
     assert args.index("data:generic3d_dataset_config") < args.index("model.encoder:nnfoundation_encoder_config")
     assert args[-1] == "logger:no_logger_config"
 

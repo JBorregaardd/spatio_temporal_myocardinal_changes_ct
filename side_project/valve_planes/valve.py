@@ -289,7 +289,8 @@ def build_train_args(config: dict[str, Any], settings: dict[str, Any], crops_dir
     args += ["model.encoder:nnfoundation_encoder_config"]
     args += ["--model.encoder.checkpoint_path", config["encoders"][settings["encoder"]]]
     args += ["--model.encoder.input_channels", "1", "--model.encoder.input_shape", *map(str, config["input_shape"])]
-    args += ["model.head:classification_head_config", "logger:no_logger_config"]
+    args += ["model.head:classification_head_config"]
+    args += ["--model.head.dropout", str(float(settings.get("head_dropout") or 0.0)), "logger:no_logger_config"]
     if settings.get("linear_probe"):
         args += ["peft:linear_probing_config"]
     return args
@@ -657,6 +658,9 @@ def train(
     valve: Valve = typer.Argument(..., help="Valve to train on."),
     lr: Optional[float] = typer.Option(None, help="Learning rate."),
     epochs: Optional[int] = typer.Option(None, help="Number of epochs."),
+    head_dropout: Optional[float] = typer.Option(
+        None, min=0.0, max=0.99, help="Dropout before the classifier in the classification head."
+    ),
     folds: Optional[int] = typer.Option(None, min=1, help="Cross-validation folds to train (cv_folds)."),
     batch_size: Optional[int] = typer.Option(None, help="Batch size."),
     encoder: Optional[Encoder] = typer.Option(None, help="Pretrained encoder."),
@@ -672,6 +676,7 @@ def train(
     overrides = {
         "lr": lr,
         "epochs": epochs,
+        "head_dropout": head_dropout,
         "cv_folds": folds,
         "batch_size": batch_size,
         "encoder": encoder.value if encoder else None,
