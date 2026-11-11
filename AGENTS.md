@@ -21,7 +21,7 @@
     spaghetti plots (one for women, one for men) are made with
     `uv run repeated_measures/spaghetti_plot.py --measurement lvm_g`; it needs
     `df/CGPS1_CGPS10_links.csv` (from `comparative_analysis/compare.py`) and each dataset's
-    `statistics_patient_summary.csv` in `df/<dataset>_*` or `output/<dataset>_*`.
+    `output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv` (from `main_statistics_df.py`).
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
