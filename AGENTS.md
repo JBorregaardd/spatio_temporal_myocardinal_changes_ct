@@ -17,6 +17,11 @@
     `uv run side_project/valve_planes/valve.py <command>` (`check`, `smoke`, `train`, `logs`, `runs`, `test`,
     `errors`, `plots`). Settings are in `side_project/valve_planes/valve_config.yaml`, paths in `.env`
     (`VALVE_DATA_DIR`, `GLOVITA_DIR`, optional `VALVE_PLANES_DIR`). See `side_project/valve_planes/REMOTE_TRAINING.md`.
+* Repeated measures statistics between CGPS1 (baseline) and CGPS10 (follow-up) live in `repeated_measures/`. The
+    spaghetti plots (one for women, one for men) are made with
+    `uv run repeated_measures/spaghetti_plot.py --measurement lvm_g`; it needs
+    `df/CGPS1_CGPS10_links.csv` (from `comparative_analysis/compare.py`) and each dataset's
+    `statistics_patient_summary.csv` in `df/<dataset>_*` or `output/<dataset>_*`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 

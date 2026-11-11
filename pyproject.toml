@@ -21,6 +21,7 @@ dependencies = [
     "blosc2>=4.14.1",
     "edt>=3.1.2",
     "fastapi==0.115.6",
+    "matplotlib>=3.11.2",
     "pandas>=3.0.5",
     "platipy>=0.4.1",
     "python-dotenv>=1.2.3",
