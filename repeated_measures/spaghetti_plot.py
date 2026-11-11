@@ -1,8 +1,9 @@
 #################################################################################################################################################
 # This script makes a spaghetti plot of one measurement, by default the LV myocardial mass (lvm_g), for the subjects scanned in both CGPS1
 # (baseline) and CGPS10 (10-year follow-up), one plot for women and one for men. Each subject is a line from the baseline to the follow-up
-# value, and the mean ± sd is drawn on top. Only subjects with a value at both examinations are plotted, and the script prints how many of
-# the linked subjects are left out and why.
+# value, with a small dot at each value, coloured by the HT class of the subject's CGPS1 scan in df/repeated_measures/CGPS1_HT.csv (made
+# by ht_classifier.py; CGPS10 is not used for the colour). Only subjects with a value at both examinations and an HT class are plotted,
+# and the script prints how many of the linked subjects are left out and why.
 # The per-patient values are read from <run folder>/statistics/statistics_patient_summary.csv of each dataset, e.g.
 # output/CGPS10_0mm/statistics/statistics_patient_summary.csv, so run main_statistics_df.py for both datasets first.
 # The subjects are linked by <df>/CGPS1_CGPS10_links.csv, made by comparative_analysis/compare.py.
@@ -26,6 +27,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
 from main_all_df import ROW_LABELS, SEX_CODES  # noqa: E402
+from ht_classifier import HT_FILE, HT_FOLDER  # noqa: E402
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 
 DATASETS = {"CGPS1": "Baseline", "CGPS10": "10-year follow-up"}
@@ -33,6 +35,7 @@ LINKS_FILE = "CGPS1_CGPS10_links.csv"
 PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 OUTPUT_FOLDER = os.path.join("reports", "figures", "repeated_measures")
 SEX_TITLES = {"male": "Men", "female": "Women"}
+HT_STYLES = {False: ("No HT", "#1f77b4"), True: ("HT", "#d62728")}
 
 
 def patient_summary_path(
@@ -133,13 +136,28 @@ def paired_values(summaries: dict[str, pd.DataFrame], links: pd.DataFrame, measu
     return pd.concat(rows, ignore_index=True)
 
 
-def spaghetti_plot(
-    data: pd.DataFrame, label: str, group: str = "", ylim: tuple[float, float] | None = None
-) -> plt.Figure:
-    """Spaghetti plot with one line per subject from baseline to follow-up and the mean ± sd on top.
+def add_ht(data: pd.DataFrame, ht: pd.DataFrame) -> pd.DataFrame:
+    """Add the HT class of each subject's CGPS1 scan to the long table; CGPS10 is not used.
 
     Args:
         data: Long table from ``paired_values``.
+        ht: One row per CGPS1 patient with ``patient_id`` and ``HT``, from ht_classifier.py.
+
+    Returns:
+        ``data`` with the column ``HT`` on both rows of each subject, missing if the CGPS1 scan has no class.
+    """
+    classes = ht.drop_duplicates("patient_id").set_index("patient_id")["HT"].astype("boolean")
+    cgps1_ids = data["subject"].map(data.loc[data["dataset"] == "CGPS1"].set_index("subject")["patient_id"])
+    return data.assign(HT=cgps1_ids.map(classes).astype("boolean"))
+
+
+def spaghetti_plot(
+    data: pd.DataFrame, label: str, group: str = "", ylim: tuple[float, float] | None = None
+) -> plt.Figure:
+    """Spaghetti plot with one line per subject from baseline to follow-up, a dot at each value and coloured by HT.
+
+    Args:
+        data: Long table from ``add_ht`` with a ``True``/``False`` HT class for every subject.
         label: Axis label of the measurement, e.g. ``Mass (g)``.
         group: Name of the subjects in the title, e.g. ``Women``; empty for all subjects.
         ylim: Limits of the y axis, e.g. the same for the plots of women and men; automatic if not given.
@@ -148,17 +166,20 @@ def spaghetti_plot(
         The figure.
     """
     positions = {dataset: x for x, dataset in enumerate(DATASETS)}
-    wide = data.pivot(index="subject", columns="dataset", values="value")[list(DATASETS)]
-    n_subjects = len(wide)
-    alpha = min(0.6, max(0.05, 30 / max(n_subjects, 1)))
+    n_subjects = data["subject"].nunique()
 
     fig, ax = plt.subplots(figsize=(5, 6))
-    ax.plot(list(positions.values()), wide.to_numpy().T, color="0.5", linewidth=0.6, alpha=alpha)
-    means, sds = wide.mean(), wide.std()
-    ax.errorbar(
-        list(positions.values()), means.to_numpy(), yerr=sds.to_numpy(), color="C3", linewidth=2.5, marker="o",
-        markersize=7, capsize=6, label="Mean ± sd", zorder=3,
-    )
+    for ht, (name, colour) in HT_STYLES.items():
+        subjects = data[data["HT"] == ht]
+        wide = subjects.pivot(index="subject", columns="dataset", values="value")[list(DATASETS)]
+        if wide.empty:
+            continue
+        alpha = min(0.9, max(0.3, 60 / len(wide)))
+        lines = ax.plot(
+            list(positions.values()), wide.to_numpy().T, color=colour, linewidth=0.7, alpha=alpha, marker="o",
+            markersize=2,
+        )
+        lines[0].set_label(f"{name} (n = {len(wide)})")
     ax.set_xticks(list(positions.values()), [f"{dataset}\n{DATASETS[dataset]}" for dataset in DATASETS])
     ax.set_xlim(-0.3, len(DATASETS) - 0.7)
     ax.set_ylabel(label)
@@ -182,6 +203,8 @@ if __name__ == "__main__":
                         help=f"Aortic exclusion distance of the runs (default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--output-dir", default=None,
                         help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    parser.add_argument("--ht", default=None,
+                        help=f"HT classes of the CGPS1 patients (default: <PROJECT_ROOT>/{HT_FOLDER}/{HT_FILE}).")
     parser.add_argument("--figure-dir", default=None,
                         help=f"Folder of the plots and the table (default: <PROJECT_ROOT>/{OUTPUT_FOLDER}).")
     args = parser.parse_args()
@@ -208,6 +231,14 @@ if __name__ == "__main__":
     if data.empty:
         raise SystemExit("No subjects with a value at both examinations.")
 
+    ht_path = Path(args.ht) if args.ht else Path(root) / HT_FOLDER / HT_FILE
+    if not ht_path.is_file():
+        raise SystemExit(f"HT classes not found: {ht_path}\nRun repeated_measures/ht_classifier.py first.")
+    data = add_ht(data, read_ids(ht_path, ["patient_id"]))
+    missing_ht = data.loc[data["HT"].isna(), "subject"].nunique()
+    if missing_ht:
+        print(f"[WARN] {missing_ht} subjects without an HT class for their CGPS1 scan are left out of the plots.")
+
     output_folder = Path(args.figure_dir) if args.figure_dir else Path(root) / OUTPUT_FOLDER
     output_folder.mkdir(parents=True, exist_ok=True)
     data.to_csv(output_folder / f"spaghetti_{args.measurement}.csv", index=False)
@@ -218,7 +249,7 @@ if __name__ == "__main__":
     if missing_sex:
         print(f"[WARN] {missing_sex} subjects without sex are left out of the plots.")
     for sex, code in SEX_CODES.items():
-        group = data[data["sex"] == code]
+        group = data[(data["sex"] == code) & data["HT"].notna()]
         if group.empty:
             print(f"[WARN] No {sex} subjects, no plot made.")
             continue
