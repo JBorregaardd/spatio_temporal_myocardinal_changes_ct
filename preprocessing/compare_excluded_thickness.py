@@ -20,6 +20,7 @@ Inputs and outputs:
 Examples:
     uv run preprocessing/compare_excluded_thickness.py --dataset ImageCAS_1-200
     uv run preprocessing/compare_excluded_thickness.py --dataset ImageCAS_1-200 --aorta-exclusion-mm 2.5
+    uv run preprocessing/compare_excluded_thickness.py --dataset ImageCAS_1-200 --k-only
 """
 from __future__ import annotations
 
@@ -162,6 +163,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
                         help=f"Aortic exclusion distance of the run to analyse (default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--output-dir", default=None, help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
+    parser.add_argument("--k-only", action="store_true",
+                        help="Use the exclusion table from analyse_ct_quality.py --k-only. Outputs get a '_k_only' "
+                             "suffix.")
     return parser.parse_args()
 
 
@@ -175,9 +179,11 @@ def main() -> None:
     figure_dir = os.path.join(root, "reports", "figures", "preprocessing")
     os.makedirs(figure_dir, exist_ok=True)
 
-    exclusion_path = os.path.join(table_dir, f"{args.dataset}_ct_quality_exclusion.csv")
+    suffix = "_k_only" if args.k_only else ""
+    exclusion_path = os.path.join(table_dir, f"{args.dataset}_ct_quality_exclusion{suffix}.csv")
     if not os.path.isfile(exclusion_path):
-        raise SystemExit(f"[ERROR] {exclusion_path} not found; run preprocessing/analyse_ct_quality.py first.")
+        raise SystemExit(f"[ERROR] {exclusion_path} not found; run preprocessing/analyse_ct_quality.py"
+                         f"{' --k-only' if args.k_only else ''} first.")
     if not os.path.isdir(statistics_folder):
         raise SystemExit(f"[ERROR] {statistics_folder} not found; run measurements/main_statistics_df.py first.")
 
@@ -198,7 +204,7 @@ def main() -> None:
     print(f"{args.dataset}, aorta exclusion {args.aorta_exclusion_mm:g} mm: {len(patients)} patients, "
           f"{len(patients) - n_excluded} kept, {n_excluded} excluded")
 
-    name = f"{args.dataset}_{args.aorta_exclusion_mm:g}mm"
+    name = f"{args.dataset}_{args.aorta_exclusion_mm:g}mm{suffix}"
     columns = ["mean_all", "mean_kept", "mean_excluded", "difference_kept_minus_excluded", "p_value"]
     saved = []
     for value, measure in THICKNESS_MEASURES.items():
