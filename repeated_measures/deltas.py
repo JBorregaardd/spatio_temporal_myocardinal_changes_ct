@@ -3,7 +3,7 @@
 # (baseline) and CGPS10 (10-year follow-up). The subjects are linked by <df>/CGPS1_CGPS10_links.csv, made by comparative_analysis/compare.py,
 # and the values are read from output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv of each dataset.
 # It saves one row per subject in <PROJECT_ROOT>/df/repeated_measures/deltas.csv with the ids, sex (from CGPS1, else CGPS10) and the
-# delta of each feature, and the n and mean ± sd of each delta in delta_summary.csv in the same folder.
+# delta of each feature, and prints the n and mean ± sd of each delta.
 # A subject is kept when it is in both patient summaries; a delta is missing when the feature is missing at either examination.
 # e.g. uv run repeated_measures/deltas.py
 #################################################################################################################################################
@@ -39,7 +39,6 @@ FEATURES = [
     "LVDVI",
 ]
 DELTAS_FILE = "deltas.csv"
-SUMMARY_FILE = "delta_summary.csv"
 
 
 def delta_table(summaries: dict[str, pd.DataFrame], links: pd.DataFrame, features: list[str]) -> pd.DataFrame:
@@ -125,11 +124,9 @@ if __name__ == "__main__":
 
     table = delta_table(summaries, links, FEATURES)
     print(f"{len(table)} of {len(links)} linked subjects are in both patient summaries.")
-    summary = delta_summary(table, FEATURES)
-    print(summary[["feature", "n", "mean ± sd"]].to_string(index=False))
+    print(delta_summary(table, FEATURES)[["feature", "n", "mean ± sd"]].to_string(index=False))
 
     output_folder = Path(root) / HT_FOLDER
     output_folder.mkdir(parents=True, exist_ok=True)
     table.to_csv(output_folder / DELTAS_FILE, index=False)
-    summary.to_csv(output_folder / SUMMARY_FILE, index=False, encoding="utf-8-sig")
-    print(f"Tables saved to: {output_folder / DELTAS_FILE} and {output_folder / SUMMARY_FILE}")
+    print(f"Table saved to: {output_folder / DELTAS_FILE}")
