@@ -25,7 +25,8 @@
     coloured by `df/repeated_measures/CGPS1_HT.csv`, made with `uv run repeated_measures/ht_classifier.py
     --threshold-mm 15` (HT when the CGPS1 `lvm_average_thickness_mm` is above the threshold). The change
     (CGPS10 - CGPS1) of every patient summary feature is computed with `uv run repeated_measures/deltas.py`, saved
-    in `df/repeated_measures/deltas.csv`.
+    in `df/repeated_measures/deltas.csv`. Their correlation matrix is made in R with
+    `Rscript repeated_measures/delta_correlation.R pearson` (or `spearman`; needs the R package `corrplot`).
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
