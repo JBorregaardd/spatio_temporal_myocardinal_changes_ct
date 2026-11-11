@@ -23,7 +23,9 @@
     `df/CGPS1_CGPS10_links.csv` (from `comparative_analysis/compare.py`) and each dataset's
     `output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv` (from `main_statistics_df.py`). The lines are
     coloured by `df/repeated_measures/CGPS1_HT.csv`, made with `uv run repeated_measures/ht_classifier.py
-    --threshold-mm 15` (HT when the CGPS1 `lvm_average_thickness_mm` is above the threshold).
+    --threshold-mm 15` (HT when the CGPS1 `lvm_average_thickness_mm` is above the threshold). The change
+    (CGPS10 - CGPS1) of every patient summary feature is computed with `uv run repeated_measures/deltas.py`, saved
+    in `df/repeated_measures/deltas.csv` and `delta_summary.csv`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
