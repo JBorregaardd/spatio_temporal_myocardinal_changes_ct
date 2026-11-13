@@ -50,3 +50,18 @@ def segment_volume(lv17_path: str) -> dict[str, float]:
         result[f"segment_{segment}_mass_g"] = volume_ml * 1.055 #1.055 g/ml is the myocardial density
     return result
 
+def ejection_fraction(end_diastole_path, end_systole_path: str) -> float:
+    """Calculate the ejection fraction from the end-diastolic and end-systolic TotalSegmentator heart-chambers segmentations."""
+
+    ed_segmentation = sitk.ReadImage(end_diastole_path)
+    es_segmentation = sitk.ReadImage(end_systole_path)
+
+    ed_voxels = int(np.count_nonzero(sitk.GetArrayViewFromImage(ed_segmentation) == LV_ID))
+    es_voxels = int(np.count_nonzero(sitk.GetArrayViewFromImage(es_segmentation) == LV_ID))
+
+    ed_volume = ed_voxels * float(np.prod(ed_segmentation.GetSpacing())) / 1000
+    es_volume = es_voxels * float(np.prod(es_segmentation.GetSpacing())) / 1000
+
+    ejection_fraction = (ed_volume - es_volume) / ed_volume
+
+    return ejection_fraction
