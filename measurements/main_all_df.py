@@ -29,6 +29,8 @@ ROW_LABELS = {
     "lv_blood_pool_volume_ml": "LV blood pool volume (mL)",
     "lvm_g": "Mass (g)",
     "LVDVI": "LVDVI (mL/m^2)",
+    "lv_esv_ml": "LV end-systolic volume (mL)",
+    "ejection_fraction": "LV ejection fraction (%)",
     "Sphericity_index": "Volumetric sphericity index",
     "lvm_average_thickness_mm": "Average thickness (mm)",
     "lvm_max_thickness_mm": "Max thickness (mm)",
@@ -64,7 +66,8 @@ def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Make the table of the whole LV: n, the share of women and each measurement as mean ± sd per group of patients.
 
     The share of women is the percentage of patients with ``sex`` 1 among the patients with a known sex. Rows without
-    any values in a group, e.g. BSA for a dataset without demographics, are left empty.
+    any values in a group, e.g. BSA for a dataset without demographics or the ejection fraction for CGPS1, are left
+    empty; rows with values for only some patients get their own n, e.g. ``55.10 ± 6.20 (n=812)``.
 
     Args:
         groups: Group name to that group's rows, one row per patient with ``patient_id``, ``sex`` (0 = man,
@@ -79,8 +82,10 @@ def all_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
         sex = data["sex"].dropna()
         column[FEMALE_LABEL] = f"{(sex == 1).mean() * 100:.2f}" if len(sex) else ""
         for key, label in ROW_LABELS.items():
-            values = data[key]
+            values = data[key] if key in data else pd.Series(dtype=float)
             column[label] = f"{values.mean():.2f} ± {values.std():.2f}" if values.notna().any() else ""
+            if values.notna().any() and values.notna().sum() < len(data):
+                column[label] += f" (n={values.notna().sum()})"
         columns[name] = column
     return pd.DataFrame(columns).rename_axis("Whole LV")
 
@@ -89,14 +94,21 @@ if __name__ == "__main__":
     root, _ = load_environment()
 
     parser = argparse.ArgumentParser(description="Create the whole-LV table from the patient summary statistics.")
-    parser.add_argument("--dataset", required=True,
-                        help="Dataset name of the pipeline run, as given to main_statistics_df.py.")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
-                        help=f"Aortic exclusion distance of the run (default: {AORTA_EXCLUSION_MM}).")
-    parser.add_argument("--output-dir", default=None,
-                        help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
-    parser.add_argument("--sex", choices=SEX_CHOICES, default="all",
-                        help="Only include the patients of this sex (default: all).")
+    parser.add_argument(
+        "--dataset", required=True, help="Dataset name of the pipeline run, as given to main_statistics_df.py."
+    )
+    parser.add_argument(
+        "--aorta-exclusion-mm",
+        type=float,
+        default=AORTA_EXCLUSION_MM,
+        help=f"Aortic exclusion distance of the run (default: {AORTA_EXCLUSION_MM}).",
+    )
+    parser.add_argument(
+        "--output-dir", default=None, help="Parent of the run folders (default: <PROJECT_ROOT>/output)."
+    )
+    parser.add_argument(
+        "--sex", choices=SEX_CHOICES, default="all", help="Only include the patients of this sex (default: all)."
+    )
     args = parser.parse_args()
 
     summary_csv = os.path.join(

@@ -3,6 +3,8 @@
 # It reads the run folder <output>/<dataset>_<aorta-exclusion-mm> written by main_pipeline.py and saves the results to CSV files in
 # <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV myocardial volume and mass, the LV blood pool
 # volume and the sphericity index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
+# For CGPS10, set ES_SEGMENTATION_FOLDER to get the end-systolic LV volume and the ejection fraction; patients without an ES segmentation
+# (and CGPS1, which has no ES scans) get NaN.
 # e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
@@ -13,6 +15,7 @@ import sys
 import json
 import argparse
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 import numpy as np
 import pandas as pd
 
@@ -21,10 +24,10 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 
 from BSA import body_surface_area, gender_and_age, load_metadata_file, load_translationtable_file  # noqa: E402
-from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
+from pipeline import AORTA_EXCLUSION_MM, DataSource, load_environment, run_output_dir  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from thickness import SEGMENTS, madwt, septal_lateral_ratio, thickness_per_segment  # noqa: E402
-from volume import blood_pool_volume, myocardium_volume, segment_volume  # noqa: E402
+from volume import blood_pool_volume, ejection_fraction, myocardium_volume, segment_volume  # noqa: E402
 
 DATASETS_WITHOUT_DEMOGRAPHICS = {"ImageCAS_1-200"}
 FINISHED_MARKER = "done.json"
@@ -61,6 +64,8 @@ PATIENT_FIELDS = [
     "lv_blood_pool_volume_ml",
     "Sphericity_index",
     "LVDVI",
+    "lv_esv_ml",
+    "ejection_fraction",
 ]
 
 
@@ -108,13 +113,39 @@ def average_thickness(patient_dir: str) -> float:
     return float(np.mean(values)) if values else np.nan
 
 
-def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -> tuple[list[dict], dict] | None:
+def es_segmentation_path(data: DataSource, patient_id: str) -> str | None:
+    """The patient's end-systolic segmentation, from ``ES_SEGMENTATION_FOLDER`` with the ``SEGMENTATION_PATTERN``.
+
+    Only CGPS10 has end-systolic scans, so the variable is only set for that dataset.
+
+    Args:
+        data: Location and naming of the (end-diastolic) segmentations.
+        patient_id: Dataset id.
+
+    Returns:
+        The path, or ``None`` if ``ES_SEGMENTATION_FOLDER`` is not set or the patient has no single ES segmentation.
+    """
+    folder = os.environ.get("ES_SEGMENTATION_FOLDER")
+    if not folder:
+        return None
+    try:
+        path = replace(data, segmentation_folder=folder).segmentation_path(patient_id)
+    except ValueError as error:
+        print(f"Patient {patient_id}: no ES volume, {error}")
+        return None
+    return path if os.path.isfile(path) else None
+
+
+def measure_patient(
+    patient_id: str, patient_dir: str, segmentation_path: str, es_path: str | None = None
+) -> tuple[list[dict], dict] | None:
     """Per-segment and patient-level measurements of one patient, without the demographics.
 
     Args:
         patient_id: Dataset id.
         patient_dir: The patient's output folder from the LVM thickness pipeline.
-        segmentation_path: TotalSegmentator heart-chambers segmentation of the patient.
+        segmentation_path: TotalSegmentator heart-chambers segmentation of the patient (end-diastolic for CGPS10).
+        es_path: End-systolic segmentation of the patient; without it the ESV and ejection fraction are NaN.
 
     Returns:
         Tuple of (one row per segment, one patient row), or ``None`` if the patient could not be measured.
@@ -139,6 +170,7 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
         sphericity = sphericity_index(segmentation_path)
         myocardium = myocardium_volume(segmentation_path)
         blood_pool = blood_pool_volume(segmentation_path)
+        esv = blood_pool_volume(es_path)["lv_blood_pool_volume_ml"] if es_path else np.nan
         patient_row = {
             "patient_id": patient_id,
             "lvm_max_thickness_mm": np.nanmax(
@@ -151,6 +183,8 @@ def measure_patient(patient_id: str, patient_dir: str, segmentation_path: str) -
             "lvm_g": myocardium["lvm_mass_g"],
             "lv_blood_pool_volume_ml": blood_pool["lv_blood_pool_volume_ml"],
             "Sphericity_index": sphericity["si_vol"],
+            "lv_esv_ml": esv,
+            "ejection_fraction": ejection_fraction(blood_pool["lv_blood_pool_volume_ml"], esv) if es_path else np.nan,
         }
         print(f"Patient {patient_id} done")
         return segment_rows, patient_row
@@ -193,10 +227,11 @@ if __name__ == "__main__":
 
     patient_dirs = [os.path.join(run_folder, pid) for pid in patient_ids]
     segmentation_paths = [data.segmentation_path(pid) for pid in patient_ids]
+    es_paths = [es_segmentation_path(data, pid) for pid in patient_ids]
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         results = [
             result
-            for result in executor.map(measure_patient, patient_ids, patient_dirs, segmentation_paths)
+            for result in executor.map(measure_patient, patient_ids, patient_dirs, segmentation_paths, es_paths)
             if result is not None
         ]
     if not results:
@@ -210,7 +245,7 @@ if __name__ == "__main__":
     else:
         demographics = load_demographics(args.dataset)
     patients = patients.merge(demographics, on="patient_id", how="left")
-    patients["LVDVI"] = patients["lv_blood_pool_volume_ml"] /patients["bsa_m2"].astype(float)
+    patients["LVDVI"] = patients["lv_blood_pool_volume_ml"] / patients["bsa_m2"].astype(float)
 
     segments = segments.merge(patients[["patient_id", "bsa_m2"]].rename(columns={"bsa_m2": "BSA"}), on="patient_id")
     segments["SLVDVI"] = segments["volume_ml"] / segments["BSA"].astype(float)
@@ -221,6 +256,7 @@ if __name__ == "__main__":
     patient_csv = os.path.join(statistics_folder, "statistics_patient_summary.csv")
     segments[SEGMENT_FIELDS].to_csv(segment_csv, index=False)
     patients[PATIENT_FIELDS].to_csv(patient_csv, index=False)
+    print(f"Ejection fraction for {patients['ejection_fraction'].notna().sum()} of {len(patients)} patient(s)")
     print(f"Results for {len(patients)} of {len(patient_ids)} patient(s) saved to:")
     print(f"  {segment_csv}")
     print(f"  {patient_csv}")
