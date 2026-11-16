@@ -15,7 +15,8 @@
     `tasks.py` file.
 * The valve open/closed classifier side project is trained and tested with GloViTa (a separate clone) through
     `uv run side_project/valve_planes/valve.py <command>` (`check`, `smoke`, `train`, `logs`, `runs`, `test`,
-    `errors`, `plots`). Settings are in `side_project/valve_planes/valve_config.yaml`, paths in `.env`
+    `errors`, `plots`, `review`). `review` lists the labelled scans where the model disagrees with `labels.csv`; relabel
+    them with `uv run side_project/valve_planes/label_valves.py <planes folder> --only <ids file>`. Settings are in `side_project/valve_planes/valve_config.yaml`, paths in `.env`
     (`VALVE_DATA_DIR`, `GLOVITA_DIR`, optional `VALVE_PLANES_DIR`). See `side_project/valve_planes/REMOTE_TRAINING.md`.
 * Repeated measures statistics between CGPS1 (baseline) and CGPS10 (follow-up) live in `repeated_measures/`. The
     spaghetti plots (one for women, one for men) are made with
