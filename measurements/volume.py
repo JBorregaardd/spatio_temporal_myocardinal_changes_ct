@@ -21,7 +21,7 @@ def myocardium_volume(segmentation_path: str) -> dict[str, float]:
     segmentation = sitk.ReadImage(segmentation_path)
     voxels = int(np.count_nonzero(sitk.GetArrayViewFromImage(segmentation) == LVM_ID))
     volume_ml = voxels * float(np.prod(segmentation.GetSpacing())) / 1000
-    return {"lvm_volume_ml": volume_ml, "lvm_mass_g": volume_ml * 1.055 } #1.055 g/ml is the myocardial density
+    return {"lvm_volume_ml": volume_ml, "lvm_mass_g": volume_ml * 1.055}  # 1.055 g/ml is the myocardial density
 
 
 def blood_pool_volume(segmentation_path: str) -> dict[str, float]:
@@ -47,6 +47,20 @@ def segment_volume(lv17_path: str) -> dict[str, float]:
     for segment in range(1, 18):
         volume_ml = np.count_nonzero(labels == segment) * voxel_ml
         result[f"segment_{segment}_volume_ml"] = volume_ml
-        result[f"segment_{segment}_mass_g"] = volume_ml * 1.055 #1.055 g/ml is the myocardial density
+        result[f"segment_{segment}_mass_g"] = volume_ml * 1.055  # 1.055 g/ml is the myocardial density
     return result
 
+
+def ejection_fraction(end_diastolic_volume_ml: float, end_systolic_volume_ml: float) -> float:
+    """LV ejection fraction from the end-diastolic and end-systolic LV blood pool volumes.
+
+    Args:
+        end_diastolic_volume_ml: LV blood pool volume of the end-diastolic segmentation (``blood_pool_volume``).
+        end_systolic_volume_ml: LV blood pool volume of the end-systolic segmentation (``blood_pool_volume``).
+
+    Returns:
+        Ejection fraction in percent, ``(EDV - ESV) / EDV * 100``; NaN if the EDV is not positive.
+    """
+    if end_diastolic_volume_ml <= 0:
+        return float("nan")
+    return (end_diastolic_volume_ml - end_systolic_volume_ml) / end_diastolic_volume_ml * 100

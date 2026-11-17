@@ -17,6 +17,7 @@ never re-synced away and an active conda environment does not matter. Examples:
     uv run side_project/valve_planes/valve.py test mitral          # ensemble of the fold models on the test set
     uv run side_project/valve_planes/valve.py errors mitral
     uv run side_project/valve_planes/valve.py plots mitral
+    uv run side_project/valve_planes/valve.py review mitral        # scans where the model and labels.csv disagree
 """
 from __future__ import annotations
 
@@ -968,6 +969,117 @@ def plots(
         else:
             console.print("No misclassified test scans, so no gallery.")
     console.print("Plots written:\n" + "\n".join(f"  {path}" for path in written))
+
+
+def read_manual_labels(path: Path, valve: str) -> dict[str, int]:
+    """Read the open/closed labels of one valve from the ``labels.csv`` of ``label_valves.py``.
+
+    Args:
+        path: Labels CSV (``patient_id,aortic,mitral,updated``).
+        valve: Valve column to read.
+
+    Returns:
+        Scan id to label code (0 = closed, 1 = open); unclear and missing labels are left out.
+    """
+    codes = {name: code for code, name in LABEL_NAMES.items()}
+    with open(path, newline="") as file:
+        return {row["patient_id"]: codes[row[valve]] for row in csv.DictReader(file) if row.get(valve) in codes}
+
+
+def write_review_dataset(review_dir: Path, crops_dir: Path, labels: dict[str, int]) -> list[str]:
+    """Write a GloViTa dataset whose test split holds every labelled scan with a crop.
+
+    The images folder is a symlink to the crops of the valve, so no crop is copied.
+
+    Args:
+        review_dir: Dataset folder to write.
+        crops_dir: Exported crop dataset of the valve.
+        labels: Scan id to label code, from ``read_manual_labels``.
+
+    Returns:
+        The scan ids of the test split.
+    """
+    scans = sorted(scan for scan in labels if (crops_dir / "images" / f"{scan}.b2nd").exists())
+    review_dir.mkdir(parents=True, exist_ok=True)
+    images = review_dir / "images"
+    if not images.exists():
+        os.symlink(crops_dir.resolve() / "images", images, target_is_directory=True)
+    (review_dir / "dataset.json").write_text((crops_dir / "dataset.json").read_text())
+    (review_dir / "labels.json").write_text(json.dumps({scan: labels[scan] for scan in scans}, indent=2))
+    (review_dir / "splits.json").write_text(json.dumps({"train": scans, "val": scans, "test": scans}, indent=2))
+    return scans
+
+
+def find_disagreements(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the scans whose prediction differs from the manual label, the most confident disagreement first.
+
+    Args:
+        rows: Per-scan predictions from ``read_predictions``.
+
+    Returns:
+        The disagreeing rows, sorted by distance of P(open) from 0.5, largest first.
+    """
+    return sorted((row for row in rows if row["label"] != row["pred"]), key=lambda row: -abs(row["p_open"] - 0.5))
+
+
+@app.command()
+def review(
+    valve: Valve = typer.Argument(..., help="Valve of the run."),
+    run: Optional[str] = typer.Option(None, help="Run folder name or a unique part of it; default: the latest run."),
+) -> None:
+    """List every labelled scan where the run disagrees with labels.csv, to check the labels.
+
+    All splits are predicted by the ensemble of the fold models, so training scans are included (the model has seen
+    them; this is for finding wrong labels, not for measuring performance). The scan ids are written to a text file
+    for ``label_valves.py --only``.
+    """
+    paths = load_paths()
+    selected = select_experiment(paths, valve.value, run)
+    if len(selected.trained_folds) < selected.n_folds:
+        console.print(
+            f"[red]Only {len(selected.trained_folds)} of {selected.n_folds} folds have a best checkpoint.[/red]"
+        )
+        raise typer.Exit(1)
+    labels_csv = paths.planes_dir / "labels.csv"
+    require(labels_csv, "Set VALVE_PLANES_DIR to the folder with the labels.csv of label_valves.py.")
+    crops_dir = paths.crops(valve.value)
+    require(crops_dir / "dataset.json", "Export the crops first (export_crops.py).")
+    review_dir = paths.data_dir / "review" / valve.value
+    scans = write_review_dataset(review_dir, crops_dir, read_manual_labels(labels_csv, valve.value))
+    console.print(f"Run: {selected.name}\nPredicting {len(scans)} labelled {valve.value} scans")
+
+    out_dir = selected.path / "review"
+    out_dir.mkdir(exist_ok=True)
+    pred_path, csv_path = out_dir / "all_predictions.pt", out_dir / "all_predictions.csv"
+    infer = [
+        str(paths.python), "-c", INFER_ENTRY,
+        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
+        "--pred_output", str(pred_path),
+        "data:generic3d_dataset_config", "--data.data_root_dir", str(review_dir),
+    ]  # fmt: skip
+    if launch(infer, paths.glovita_dir, None):
+        raise typer.Exit(1)
+    if launch([str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)], HERE, None):
+        raise typer.Exit(1)
+
+    rows = read_predictions(csv_path)
+    wrong = find_disagreements(rows)
+    with open(out_dir / "disagreements.csv", "w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["case_id", "manual", "predicted", "p_open"])
+        for row in wrong:
+            writer.writerow(
+                [row["case_id"], LABEL_NAMES[row["label"]], LABEL_NAMES[row["pred"]], f"{row['p_open']:.3f}"]
+            )
+    ids_path = out_dir / f"{valve.value}_to_relabel.txt"
+    ids_path.write_text("".join(f"{row['case_id']}\n" for row in wrong))
+
+    table = Table("scan", "manual", "predicted", "P(open)", title=f"{valve.value}: model and labels.csv disagree")
+    for row in wrong:
+        table.add_row(row["case_id"], LABEL_NAMES[row["label"]], LABEL_NAMES[row["pred"]], f"{row['p_open']:.3f}")
+    console.print(table)
+    console.print(f"{len(wrong)} of {len(rows)} scans disagree. Scan ids: {ids_path}")
+    console.print(f"Relabel: uv run side_project/valve_planes/label_valves.py {paths.planes_dir} --only {ids_path}")
 
 
 @app.command()

@@ -7,7 +7,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "side_project" / "valve_planes"))
 
-from label_valves import find_patients, load_labels, save_labels, set_label  # noqa: E402
+from label_valves import find_patients, load_labels, read_ids, save_labels, set_label  # noqa: E402
 
 
 def test_labels_round_trip_through_csv(tmp_path: Path) -> None:
@@ -35,3 +35,9 @@ def test_find_patients_sorts_numeric_ids_numerically(tmp_path: Path) -> None:
     for patient_id in ("10", "2", "1"):
         (tmp_path / f"{patient_id}_valves.json").write_text("{}")
     assert find_patients(str(tmp_path)) == ["1", "2", "10"]
+
+
+def test_read_ids_merges_files_and_skips_blank_lines(tmp_path: Path) -> None:
+    (tmp_path / "mitral.txt").write_text("S1\nS2\n\n")
+    (tmp_path / "aortic.txt").write_text("S2\nS3\n")
+    assert read_ids([str(tmp_path / "mitral.txt"), str(tmp_path / "aortic.txt")]) == {"S1", "S2", "S3"}

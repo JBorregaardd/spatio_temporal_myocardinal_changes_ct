@@ -31,6 +31,7 @@ VIEWS = {
     "Green": ("long_axis_b", "in_plane_v", "normal"),
 }
 AXIS_COLORS = {"in_plane_u": (0.9, 0.2, 0.2), "in_plane_v": (0.2, 0.7, 0.2), "normal": (0.2, 0.4, 0.9)}
+AXIS_LABELS = {"in_plane_u": "u", "in_plane_v": "v", "normal": "n"}
 VIEW_COLORS = {"Red": (0.95, 0.35, 0.3), "Yellow": (0.95, 0.85, 0.3), "Green": (0.4, 0.75, 0.35)}
 
 
@@ -150,7 +151,7 @@ def add_arrow(name: str, center: np.ndarray, direction: np.ndarray) -> None:
     line.AddControlPoint(vtk.vtkVector3d(*center))
     line.AddControlPoint(vtk.vtkVector3d(*(center + ARROW_MM * direction)))
     line.SetNthControlPointLabel(0, "")
-    line.SetNthControlPointLabel(1, name)
+    line.SetNthControlPointLabel(1, AXIS_LABELS[name])
     display = line.GetDisplayNode()
     display.SetSelectedColor(AXIS_COLORS[name])
     display.SetColor(AXIS_COLORS[name])
@@ -165,7 +166,9 @@ def add_crop_box(transform: slicer.vtkMRMLLinearTransformNode) -> None:
     roi.SetCenter(0.0, 0.0, 0.0)
     roi.SetSize(side_mm, side_mm, side_mm)
     roi.SetAndObserveTransformNodeID(transform.GetID())
-    roi.GetDisplayNode().SetFillOpacity(0.1)
+    display = roi.GetDisplayNode()
+    display.SetFillOpacity(0.1)
+    display.SetPropertiesLabelVisibility(False)
     roi.SetLocked(True)
 
 

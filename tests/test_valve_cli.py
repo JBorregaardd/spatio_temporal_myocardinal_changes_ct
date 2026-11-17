@@ -359,3 +359,36 @@ def test_cli_plots_writes_one_curve_per_fold(env: tuple[Path, Path]) -> None:
         "training_curves_fold0.png",
         "training_curves_fold1.png",
     ]
+
+
+def test_read_manual_labels_skips_unclear_and_empty(tmp_path: Path) -> None:
+    path = tmp_path / "labels.csv"
+    path.write_text("patient_id,aortic,mitral,updated\nS1,open,closed,\nS2,unclear,open,\nS3,,,\n")
+    assert valve.read_manual_labels(path, "mitral") == {"S1": 0, "S2": 1}
+    assert valve.read_manual_labels(path, "aortic") == {"S1": 1}
+
+
+def test_write_review_dataset_puts_every_labelled_crop_in_test(tmp_path: Path) -> None:
+    crops = tmp_path / "crops" / "mitral"
+    (crops / "images").mkdir(parents=True)
+    (crops / "dataset.json").write_text('{"num_classes": 2, "subtask": "multiclass"}')
+    for scan in ("S1", "S2"):
+        (crops / "images" / f"{scan}.b2nd").write_bytes(b"")
+    review_dir = tmp_path / "review" / "mitral"
+    try:
+        scans = valve.write_review_dataset(review_dir, crops, {"S1": 0, "S2": 1, "S9": 1})
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    assert scans == ["S1", "S2"]
+    assert json.loads((review_dir / "splits.json").read_text())["test"] == ["S1", "S2"]
+    assert json.loads((review_dir / "labels.json").read_text()) == {"S1": 0, "S2": 1}
+    assert (review_dir / "images" / "S1.b2nd").exists()
+
+
+def test_find_disagreements_most_confident_first() -> None:
+    rows = [
+        {"case_id": "A", "label": 0, "pred": 0, "p_open": 0.1},
+        {"case_id": "B", "label": 0, "pred": 1, "p_open": 0.6},
+        {"case_id": "C", "label": 1, "pred": 0, "p_open": 0.05},
+    ]
+    assert [row["case_id"] for row in valve.find_disagreements(rows)] == ["C", "B"]

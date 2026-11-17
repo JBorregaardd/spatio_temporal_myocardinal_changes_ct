@@ -279,6 +279,22 @@ The labelling PNGs are read from `<VALVE_DATA_DIR>/valve_planes`; set `VALVE_PLA
 elsewhere. The model-input slices are single slices, while the long-axis labelling views are averaged over a thin slab,
 so they look slightly noisier.
 
+### Checking the labels with the model
+
+```bash
+uv run side_project/valve_planes/valve.py review mitral
+uv run side_project/valve_planes/label_valves.py /data/Data/JERI/data/CGPS10_ED_ES/valve_planes \
+    --only <run folder>/review/mitral_to_relabel.txt
+```
+
+- `review` lets the ensemble of the fold models predict every scan labelled open or closed in the current
+  `labels.csv`, ignoring the splits, and lists the scans where prediction and label disagree, most confident first.
+  The model has trained on most of these scans, so this finds suspicious labels; it is not a performance measure.
+- It writes `<run folder>/review/all_predictions.csv`, `disagreements.csv` and `<valve>_to_relabel.txt`. The
+  temporary GloViTa dataset lives in `<VALVE_DATA_DIR>/review/<valve>/` (its `images/` is a symlink to the crops).
+- `label_valves.py --only` shows only the listed scans (several files can be given, e.g. one per valve). Labels are
+  saved to `labels.csv` as usual. Afterwards export the crops again (step 2), retrain and test.
+
 ## What to watch out for
 
 - **Class balance**: look at the counts from step 2. If one class has fewer than ~20 scans, the test split holds only

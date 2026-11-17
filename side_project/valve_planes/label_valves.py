@@ -73,10 +73,19 @@ def set_label(labels: dict[str, dict[str, str]], patient_id: str, valve: str, va
 class LabelHandler(BaseHTTPRequestHandler):
     """Serves the labelling page, the valve images and a small JSON API for reading and writing labels."""
 
-    def __init__(self, *args, image_folder: str, labels_path: str, labels: dict[str, dict[str, str]], **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        image_folder: str,
+        labels_path: str,
+        labels: dict[str, dict[str, str]],
+        patients: list[str],
+        **kwargs,
+    ) -> None:
         self.image_folder = image_folder
         self.labels_path = labels_path
         self.labels = labels
+        self.patients = patients
         super().__init__(*args, **kwargs)
 
     def log_message(self, format: str, *args) -> None:
@@ -95,7 +104,7 @@ class LabelHandler(BaseHTTPRequestHandler):
         if self.path == "/":
             self._send(200, PAGE.encode(), "text/html; charset=utf-8")
         elif self.path == "/api/state":
-            state = {"patients": find_patients(self.image_folder), "labels": self.labels, "values": LABEL_VALUES}
+            state = {"patients": self.patients, "labels": self.labels, "values": LABEL_VALUES}
             self._send(200, json.dumps(state).encode(), "application/json")
         elif self.path.startswith("/img/") and IMAGE_NAME.fullmatch(name := self.path[5:]):
             path = os.path.join(self.image_folder, name)
@@ -249,10 +258,20 @@ fetch("api/state").then(r => r.json()).then(state => {
 """
 
 
+def read_ids(paths: list[str]) -> set[str]:
+    """Read scan ids, one per line, from text files such as those written by ``valve.py review``."""
+    ids = set()
+    for path in paths:
+        with open(path) as file:
+            ids.update(line.strip() for line in file if line.strip())
+    return ids
+
+
 def main(
     image_folder: str = typer.Argument(..., help="Output folder of valve_planes.py with the per-view PNGs."),
     labels_path: str = typer.Option("", help="Labels CSV; defaults to <image_folder>/labels.csv."),
     port: int = typer.Option(8765, help="Port to serve on (localhost only)."),
+    only: list[str] = typer.Option([], help="Text file(s) with scan ids, one per line; show only these scans."),
 ) -> None:
     """Serve the labelling tool on http://localhost:<port> until interrupted with Ctrl+C."""
     image_folder = os.path.abspath(image_folder)
@@ -265,9 +284,17 @@ def main(
         )
     labels_path = labels_path or os.path.join(image_folder, "labels.csv")
     labels = load_labels(labels_path)
-    handler = partial(LabelHandler, image_folder=image_folder, labels_path=labels_path, labels=labels)
+    patients = find_patients(image_folder)
+    if only:
+        selected = read_ids(only)
+        patients = [patient_id for patient_id in patients if patient_id in selected]
+        if not patients:
+            raise SystemExit(f"None of the {len(selected)} scan ids in {', '.join(only)} are in {image_folder}")
+    handler = partial(
+        LabelHandler, image_folder=image_folder, labels_path=labels_path, labels=labels, patients=patients
+    )
     server = HTTPServer(("127.0.0.1", port), handler)
-    print(f"Labelling {len(find_patients(image_folder))} patients; labels are saved to {labels_path}")
+    print(f"Labelling {len(patients)} patients; labels are saved to {labels_path}")
     print(f"Open http://localhost:{port} (Ctrl+C to stop)")
     try:
         server.serve_forever()
