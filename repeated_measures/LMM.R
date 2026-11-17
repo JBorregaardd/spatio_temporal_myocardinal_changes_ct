@@ -14,13 +14,10 @@
 # regression to the mean, and the LMM (change scores) and the ANCOVA can disagree (Lord's paradox).
 # The values are read from output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv of each dataset and the
 # subjects are linked by df/CGPS1_CGPS10_links.csv. The tables are saved in df/repeated_measures/LMM_<measurement>_*.csv
-# and the figures in reports/figures/repeated_measures/LMM_<measurement>_*.png. Uses the R packages nlme and ggplot2.
+# and the figures in reports/figures/repeated_measures/LMM_<measurement>_*.png. Uses the R package nlme.
 # e.g. Rscript repeated_measures/LMM.R --measurement lvm_g --aorta-exclusion-mm 0 --dropouts
 #######################################################################################################################
-suppressPackageStartupMessages({
-  library(nlme)
-  library(ggplot2)
-})
+suppressPackageStartupMessages(library(nlme))
 
 DATASETS <- c("CGPS1", "CGPS10")
 HT_LEVELS <- c("No HT", "HT")
@@ -183,23 +180,31 @@ ancova <- function(data) {
 
 #' Plot of the model estimated means with 95% confidence intervals per examination, HT class and sex.
 #'
+#' One panel per sex with a line per HT class from CGPS1 to CGPS10, drawn with base R graphics on the open device.
+#'
 #' @param means Data frame with time, HT, sex, estimate, ci_low and ci_high.
 #' @param measurement Name of the measurement for the axis label.
-#' @return ggplot object.
 means_plot <- function(means, measurement) {
-  means$examination <- factor(DATASETS[means$time + 1], levels = DATASETS)
-  dodge <- position_dodge(width = 0.15)
-  ggplot(means, aes(examination, estimate, colour = HT, group = HT)) +
-    geom_line(position = dodge, linewidth = 0.8) +
-    geom_point(position = dodge, size = 2) +
-    geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.1, position = dodge) +
-    facet_wrap(~sex) +
-    scale_colour_manual(values = c("No HT" = "#1f77b4", "HT" = "#d62728"), name = NULL) +
-    labs(x = NULL, y = measurement,
-         title = sprintf("LMM estimated means of %s (95%% CI)", measurement),
-         subtitle = "At the mean baseline age; HT class from the CGPS1 scan") +
-    theme_bw() +
-    theme(legend.position = "top")
+  colours <- c("No HT" = "#1f77b4", "HT" = "#d62728")
+  offsets <- c("No HT" = -0.04, "HT" = 0.04)
+  ylim <- range(means$ci_low, means$ci_high)
+  ylim[2] <- ylim[2] + 0.25 * diff(ylim)
+  par(mfrow = c(1, length(SEX_LEVELS)), mar = c(3, 4.5, 2, 1), oma = c(0, 0, 3.5, 0))
+  for (sex in SEX_LEVELS) {
+    plot(NA, xlim = c(-0.3, 1.3), ylim = ylim, xaxt = "n", xlab = "", ylab = measurement, main = sex)
+    axis(1, at = 0:1, labels = DATASETS)
+    for (ht in HT_LEVELS) {
+      group <- means[means$sex == sex & means$HT == ht, ]
+      group <- group[order(group$time), ]
+      x <- group$time + offsets[[ht]]
+      lines(x, group$estimate, col = colours[[ht]], lwd = 2)
+      points(x, group$estimate, col = colours[[ht]], pch = 16)
+      arrows(x, group$ci_low, x, group$ci_high, angle = 90, code = 3, length = 0.04, col = colours[[ht]])
+    }
+    legend("topleft", legend = HT_LEVELS, col = colours[HT_LEVELS], lwd = 2, pch = 16, bty = "n")
+  }
+  mtext(sprintf("LMM estimated means of %s (95%% CI)", measurement), outer = TRUE, line = 2, cex = 1.1, font = 2)
+  mtext("At the mean baseline age; HT class from the CGPS1 scan", outer = TRUE, line = 0.7, cex = 0.85)
 }
 
 if (sys.nframe() == 0) {
@@ -275,8 +280,9 @@ if (sys.nframe() == 0) {
   X <- attr(grid, "X")
   rownames(X) <- seq_len(nrow(X))
   means <- cbind(grid, linear_contrasts(fit, X))
-  ggsave(file.path(figure_folder, sprintf("%s_means.png", prefix)), means_plot(means, measurement), width = 7,
-         height = 4.5, dpi = 300)
+  png(file.path(figure_folder, sprintf("%s_means.png", prefix)), width = 2400, height = 1500, res = 300)
+  means_plot(means, measurement)
+  invisible(dev.off())
 
   png(file.path(figure_folder, sprintf("%s_diagnostics.png", prefix)), width = 2400, height = 1200, res = 300)
   par(mfrow = c(1, 2))

@@ -34,7 +34,7 @@
     `statistics_patient_summary.csv`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
     patient summary measurement is fitted in R (package `nlme`) with
     `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
-    subjects without follow-up); it prints and saves the change per HT class and sex, the HT and sex interactions and an
+    subjects without follow-up; needs only `nlme`, which comes with R); it prints and saves the change per HT class and sex, the HT and sex interactions and an
     ANCOVA (`CGPS10 ~ CGPS1 + HT * sex + age_c`) as sensitivity analysis in `df/repeated_measures/LMM_<measurement>_*.csv`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
