@@ -31,7 +31,11 @@
     bullseye plots of the change in median wall thickness (%) per AHA segment (1x4: women and men with HT, then
     without HT; apex greyed out) are made with `uv run repeated_measures/bullseye_delta.py`; it needs the links table,
     `CGPS1_HT.csv` and each dataset's `output/<dataset>_0mm/statistics/statistics_thickness_per_segment.csv` and
-    `statistics_patient_summary.csv`.
+    `statistics_patient_summary.csv`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
+    patient summary measurement is fitted in R (package `nlme`) with
+    `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
+    subjects without follow-up); it prints and saves the change per HT class and sex, the HT and sex interactions and an
+    ANCOVA (`CGPS10 ~ CGPS1 + HT * sex + age_c`) as sensitivity analysis in `df/repeated_measures/LMM_<measurement>_*.csv`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
