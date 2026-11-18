@@ -100,4 +100,4 @@ def test_add_phases_uses_series_of_linked_scan() -> None:
     assert table["CGPS10_rr_percent"].iloc[0] == pytest.approx(72.0)
     assert pd.isna(table["CGPS10_rr_percent"].iloc[1])
     assert table["rr_percent_difference"].iloc[0] == pytest.approx(-3.0)
-    assert table["CGPS1_series_description"].iloc[0] == "FULL 75% 1.00s CE"
+    assert not any(column.endswith("series_description") for column in table.columns)

@@ -8,8 +8,8 @@
 # and saves one row per subject with the columns CGPS1 and CGPS10, e.g. 00001 and 0730, in <PROJECT_ROOT>/df/CGPS1_CGPS10_links.csv.
 # When CGPS1_FILELIST_CSV and CGPS10_FILELIST_CSV are set in the .env, the point in the R-R interval of each scan is added from the
 # SeriesDescription column of the file lists, written either as a percentage (FULL 73% 1.00s Cardiac 0.5 CE) or as a delay and an
-# R-R interval (HALF 648ms 0.90s PIQE 0.5 CE -> 0.648 / 0.90 = 72%), in the columns <dataset>_rr_percent,
-# <dataset>_series_description and rr_percent_difference (CGPS10 - CGPS1).
+# R-R interval (HALF 648ms 0.90s PIQE 0.5 CE -> 0.648 / 0.90 = 72%), in the columns <dataset>_rr_percent
+# and rr_percent_difference (CGPS10 - CGPS1).
 # e.g. uv run comparative_analysis/compare.py
 #################################################################################################################################################
 
@@ -106,8 +106,7 @@ def scan_phases(ids: pd.Series, series: dict[str, str], filelist: pd.DataFrame, 
         prefix: Dataset prefix of the pseudo ids, e.g. ``CGPS-10y-august-2026``.
 
     Returns:
-        One row per id, with the index of ``ids``, with ``rr_percent`` and ``series_description`` (the descriptions
-        of the kept rows joined by `` | ``).
+        The percentage of each id, with the index of ``ids``.
 
     Raises:
         ValueError: If ``PseudoID`` or ``SeriesDescription`` is missing.
@@ -133,14 +132,8 @@ def scan_phases(ids: pd.Series, series: dict[str, str], filelist: pd.DataFrame, 
             matching = candidates[candidates["text"].str.contains(series[patient_id], regex=False)]
             candidates = matching if len(matching) else candidates
         percents = candidates["rr_percent"].dropna().unique()
-        descriptions = candidates["series_description"].dropna().unique()
-        phases.append(
-            {
-                "rr_percent": percents[0] if len(percents) == 1 else float("nan"),
-                "series_description": " | ".join(descriptions) if len(descriptions) else pd.NA,
-            }
-        )
-    return pd.DataFrame(phases, index=ids.index, columns=["rr_percent", "series_description"])
+        phases.append(percents[0] if len(percents) == 1 else float("nan"))
+    return pd.Series(phases, index=ids.index, dtype=float)
 
 
 def add_phases(table: pd.DataFrame, links: pd.DataFrame, filelists: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -152,8 +145,7 @@ def add_phases(table: pd.DataFrame, links: pd.DataFrame, filelists: dict[str, pd
         filelists: Dataset name to its file list, see ``scan_phases``.
 
     Returns:
-        A copy of ``table`` with ``<dataset>_rr_percent`` and ``<dataset>_series_description`` per dataset in
-        ``filelists`` and, with both datasets, ``rr_percent_difference`` (CGPS10 - CGPS1).
+        A copy of ``table`` with ``<dataset>_rr_percent`` per dataset in ``filelists`` and, with both datasets, ``rr_percent_difference`` (CGPS10 - CGPS1).
     """
     table = table.copy()
     for dataset, filelist in filelists.items():
@@ -162,9 +154,8 @@ def add_phases(table: pd.DataFrame, links: pd.DataFrame, filelists: dict[str, pd
         scans = pd.DataFrame({"id": extract_ids(column, prefix), "series": extract_series(column, prefix)})
         scans = scans.dropna().drop_duplicates()
         unique = scans.drop_duplicates("id", keep=False)
-        phases = scan_phases(table[dataset], dict(zip(unique["id"], unique["series"])), filelist, prefix)
-        table[f"{dataset}_rr_percent"] = phases["rr_percent"]
-        table[f"{dataset}_series_description"] = phases["series_description"]
+        series = dict(zip(unique["id"], unique["series"]))
+        table[f"{dataset}_rr_percent"] = scan_phases(table[dataset], series, filelist, prefix)
     if all(dataset in filelists for dataset in DATASET_PREFIXES):
         table["rr_percent_difference"] = table["CGPS10_rr_percent"] - table["CGPS1_rr_percent"]
     return table
