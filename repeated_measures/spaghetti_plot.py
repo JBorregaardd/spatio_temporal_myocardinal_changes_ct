@@ -1,10 +1,10 @@
 #################################################################################################################################################
 # This script makes a spaghetti plot of one measurement, by default the LV myocardial mass (lvm_g), for the subjects scanned in both CGPS1
 # (baseline) and CGPS10 (10-year follow-up), one plot for women and one for men. Each subject is a line from the baseline to the follow-up
-# value, with a small dot at each value, coloured by the HT class of the subject's CGPS1 scan in df/repeated_measures/CGPS1_HT.csv (made
+# value, drawn as a faint line coloured by the HT class of the subject's CGPS1 scan in df/repeated_measures/CGPS1_HT.csv (made
 # by ht_classifier.py; CGPS10 is not used for the colour). Only subjects with a value at both examinations and an HT class are plotted,
 # and the script prints how many of the linked subjects are left out and why.
-# The mean of each HT class with its 95% confidence interval (t distribution) is drawn on top as a thick line with error bars.
+# The mean of each HT class is drawn on top as a thick line, with its 95% confidence interval (t distribution) as a shaded band.
 # The per-patient values are read from <run folder>/statistics/statistics_patient_summary.csv of each dataset, e.g.
 # output/CGPS10_0mm/statistics/statistics_patient_summary.csv, so run main_statistics_df.py for both datasets first.
 # The subjects are linked by <df>/CGPS1_CGPS10_links.csv, made by comparative_analysis/compare.py.
@@ -38,7 +38,7 @@ PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 OUTPUT_FOLDER = os.path.join("reports", "figures", "repeated_measures")
 SEX_TITLES = {"male": "Men", "female": "Women"}
 HT_STYLES = {False: ("No HT", "#1f77b4"), True: ("HT", "#d62728")}
-MEAN_OFFSET = 0.06
+PATIENT_ALPHA = 0.12
 
 
 def mean_ci(values: pd.DataFrame, confidence: float = 0.95) -> pd.DataFrame:
@@ -174,9 +174,10 @@ def add_ht(data: pd.DataFrame, ht: pd.DataFrame) -> pd.DataFrame:
 def spaghetti_plot(
     data: pd.DataFrame, label: str, group: str = "", ylim: tuple[float, float] | None = None
 ) -> plt.Figure:
-    """Spaghetti plot with one line per subject from baseline to follow-up, a dot at each value and coloured by HT.
+    """Spaghetti plot with one faint line per subject from baseline to follow-up, coloured by HT.
 
-    The mean of each HT class with its 95% confidence interval is drawn on top as a thick line with error bars.
+    The mean of each HT class is drawn on top as a thick line, with its 95% confidence interval as a lightly shaded
+    band with thin lines at its bounds.
 
     Args:
         data: Long table from ``add_ht`` with a ``True``/``False`` HT class for every subject.
@@ -191,32 +192,28 @@ def spaghetti_plot(
     n_subjects = data["subject"].nunique()
 
     fig, ax = plt.subplots(figsize=(5, 6))
+    handles, labels = [], []
     for ht, (name, colour) in HT_STYLES.items():
         subjects = data[data["HT"] == ht]
         wide = subjects.pivot(index="subject", columns="dataset", values="value")[list(DATASETS)]
         if wide.empty:
             continue
-        alpha = min(0.9, max(0.3, 60 / len(wide)))
-        lines = ax.plot(
-            list(positions.values()), wide.to_numpy().T, color=colour, linewidth=0.7, alpha=alpha, marker="o",
-            markersize=2,
-        )
-        lines[0].set_label(f"{name} (n = {len(wide)})")
+        x = list(positions.values())
+        ax.plot(x, wide.to_numpy().T, color=colour, linewidth=0.6, alpha=PATIENT_ALPHA, zorder=1)
         summary = mean_ci(wide)
-        offset = MEAN_OFFSET if ht else -MEAN_OFFSET
-        x = [position + offset for position in positions.values()]
-        ax.errorbar(
-            x, summary["mean"], yerr=[summary["mean"] - summary["lower"], summary["upper"] - summary["mean"]],
-            color=colour, linewidth=2.5, marker="o", markersize=6, markeredgecolor="black", capsize=5, capthick=2,
-            elinewidth=2, ecolor="black", zorder=10, label=f"{name} mean (95% CI)",
-        )
+        band = ax.fill_between(x, summary["lower"], summary["upper"], color=colour, alpha=0.2, linewidth=0, zorder=2)
+        for bound in ("lower", "upper"):
+            ax.plot(x, summary[bound], color=colour, linewidth=1, alpha=0.8, zorder=3)
+        (mean_line,) = ax.plot(x, summary["mean"], color=colour, linewidth=3, zorder=4)
+        handles.append((band, mean_line))
+        labels.append(f"{name} (n = {len(wide)})")
     ax.set_xticks(list(positions.values()), [f"{dataset}\n{DATASETS[dataset]}" for dataset in DATASETS])
     ax.set_xlim(-0.3, len(DATASETS) - 0.7)
     ax.set_ylabel(label)
     ax.set_title(f"{group or 'All'}: {label} (n = {n_subjects})")
     if ylim is not None:
         ax.set_ylim(*ylim)
-    ax.legend(loc="upper left", frameon=False)
+    ax.legend(handles, labels, title="Mean (95% CI)", loc="upper left", frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     return fig
