@@ -1,7 +1,7 @@
 #################################################################################################################################################
 # This script tests whether the CGPS1 (baseline) and CGPS10 (10-year follow-up) scans of the same subject are taken at the same point in the
 # R-R interval, with a paired t-test of CGPS1_rr_percent and CGPS10_rr_percent in <df>/CGPS1_CGPS10_links.csv, made by
-# comparative_analysis/compare.py with CGPS1_FILELIST_CSV and CGPS10_FILELIST_CSV set in the .env.
+# comparative_analysis/compare.py from the series descriptions in COMPARISON_DATA_FILE.
 # Only subjects with a percentage at both examinations are used. It prints n, the mean ± sd at each examination, the mean difference
 # (CGPS10 - CGPS1) with its 95% confidence interval, t and p, and saves them in <PROJECT_ROOT>/df/repeated_measures/rr_ttest.csv.
 # H0: The mean difference is zero (the scans are taken at the same point in the R-R interval).
@@ -84,7 +84,7 @@ if __name__ == "__main__":
     try:
         result = paired_rr_ttest(links)
     except ValueError as error:
-        raise SystemExit(f"{error}\nRun comparative_analysis/compare.py with the file lists set in the .env.")
+        raise SystemExit(f"{error}\nRun comparative_analysis/compare.py again to add the R-R percentages.")
     row = result.iloc[0]
     print(f"{row['n']} of {len(links)} linked subjects have the R-R percentage at both examinations.")
     for dataset in DATASETS:
