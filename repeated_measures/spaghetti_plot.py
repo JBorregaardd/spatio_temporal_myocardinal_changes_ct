@@ -4,6 +4,7 @@
 # value, with a small dot at each value, coloured by the HT class of the subject's CGPS1 scan in df/repeated_measures/CGPS1_HT.csv (made
 # by ht_classifier.py; CGPS10 is not used for the colour). Only subjects with a value at both examinations and an HT class are plotted,
 # and the script prints how many of the linked subjects are left out and why.
+# The mean of each HT class with its 95% confidence interval (t distribution) is drawn on top as a thick line with error bars.
 # The per-patient values are read from <run folder>/statistics/statistics_patient_summary.csv of each dataset, e.g.
 # output/CGPS10_0mm/statistics/statistics_patient_summary.csv, so run main_statistics_df.py for both datasets first.
 # The subjects are linked by <df>/CGPS1_CGPS10_links.csv, made by comparative_analysis/compare.py.
@@ -21,6 +22,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
+from scipy import stats  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
@@ -36,6 +38,24 @@ PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 OUTPUT_FOLDER = os.path.join("reports", "figures", "repeated_measures")
 SEX_TITLES = {"male": "Men", "female": "Women"}
 HT_STYLES = {False: ("No HT", "#1f77b4"), True: ("HT", "#d62728")}
+MEAN_OFFSET = 0.06
+
+
+def mean_ci(values: pd.DataFrame, confidence: float = 0.95) -> pd.DataFrame:
+    """Mean and t-based confidence interval of each column.
+
+    Args:
+        values: One row per subject and one column per examination.
+        confidence: Confidence level of the interval.
+
+    Returns:
+        One row per column with ``mean``, ``lower`` and ``upper``; the interval is missing for fewer than two values.
+    """
+    n = values.count()
+    mean = values.mean()
+    sem = values.std(ddof=1) / n**0.5
+    half_width = sem * stats.t.ppf((1 + confidence) / 2, n - 1)
+    return pd.DataFrame({"mean": mean, "lower": mean - half_width, "upper": mean + half_width})
 
 
 def patient_summary_path(
@@ -156,6 +176,8 @@ def spaghetti_plot(
 ) -> plt.Figure:
     """Spaghetti plot with one line per subject from baseline to follow-up, a dot at each value and coloured by HT.
 
+    The mean of each HT class with its 95% confidence interval is drawn on top as a thick line with error bars.
+
     Args:
         data: Long table from ``add_ht`` with a ``True``/``False`` HT class for every subject.
         label: Axis label of the measurement, e.g. ``Mass (g)``.
@@ -180,6 +202,14 @@ def spaghetti_plot(
             markersize=2,
         )
         lines[0].set_label(f"{name} (n = {len(wide)})")
+        summary = mean_ci(wide)
+        offset = MEAN_OFFSET if ht else -MEAN_OFFSET
+        x = [position + offset for position in positions.values()]
+        ax.errorbar(
+            x, summary["mean"], yerr=[summary["mean"] - summary["lower"], summary["upper"] - summary["mean"]],
+            color=colour, linewidth=2.5, marker="o", markersize=6, markeredgecolor="black", capsize=5, capthick=2,
+            elinewidth=2, ecolor="black", zorder=10, label=f"{name} mean (95% CI)",
+        )
     ax.set_xticks(list(positions.values()), [f"{dataset}\n{DATASETS[dataset]}" for dataset in DATASETS])
     ax.set_xlim(-0.3, len(DATASETS) - 0.7)
     ax.set_ylabel(label)
@@ -198,9 +228,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Spaghetti plot of one measurement from CGPS1 to CGPS10 per subject.")
     parser.add_argument("--measurement", default="lvm_g", choices=list(ROW_LABELS),
                         help="Column of the patient summary to plot (default: lvm_g).")
-    parser.add_argument("--links", default=None, help=f"Links table (default: <PROJECT_ROOT>/df/{LINKS_FILE}).")
-    parser.add_argument("--aorta-exclusion-mm", type=float, default=AORTA_EXCLUSION_MM,
-                        help=f"Aortic exclusion distance of the runs (default: {AORTA_EXCLUSION_MM}).")
     parser.add_argument("--output-dir", default=None,
                         help="Parent of the run folders (default: <PROJECT_ROOT>/output).")
     parser.add_argument("--ht", default=None,
@@ -209,14 +236,14 @@ if __name__ == "__main__":
                         help=f"Folder of the plots and the table (default: <PROJECT_ROOT>/{OUTPUT_FOLDER}).")
     args = parser.parse_args()
 
-    links_path = Path(args.links) if args.links else Path(root) / "df" / LINKS_FILE
+    links_path = Path(root) / "df" / LINKS_FILE
     if not links_path.is_file():
         raise SystemExit(f"Links table not found: {links_path}\nRun comparative_analysis/compare.py first.")
     links = read_ids(links_path, list(DATASETS))
 
     summaries = {}
     for dataset in DATASETS:
-        summary_path = patient_summary_path(root, dataset, args.aorta_exclusion_mm, args.output_dir)
+        summary_path = patient_summary_path(root, dataset, AORTA_EXCLUSION_MM, args.output_dir)
         if not summary_path.is_file():
             raise SystemExit(
                 f"Patient summary not found: {summary_path}\nRun main_statistics_df.py for {dataset} first."
