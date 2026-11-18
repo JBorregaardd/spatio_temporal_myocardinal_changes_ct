@@ -96,7 +96,7 @@ def scan_phases(ids: pd.Series, series: dict[str, str], filelist: pd.DataFrame, 
 
     The rows of a patient in the file list are found by ``PseudoID``. If a patient has several rows, only the rows
     mentioning the series of the linked scan are kept, when such rows exist. The percentage is missing if the kept
-    rows give different percentages.
+    rows give different percentages or any kept row has no percentage, e.g. a blank ``SeriesDescription``.
 
     Args:
         ids: Patient ids of the dataset, e.g. ``0730``.
@@ -131,7 +131,7 @@ def scan_phases(ids: pd.Series, series: dict[str, str], filelist: pd.DataFrame, 
         if len(candidates) > 1 and patient_id in series:
             matching = candidates[candidates["text"].str.contains(series[patient_id], regex=False)]
             candidates = matching if len(matching) else candidates
-        percents = candidates["rr_percent"].dropna().unique()
+        percents = candidates["rr_percent"].unique()
         phases.append(percents[0] if len(percents) == 1 else float("nan"))
     return pd.Series(phases, index=ids.index, dtype=float)
 

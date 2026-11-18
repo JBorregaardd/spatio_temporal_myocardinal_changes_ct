@@ -4,6 +4,7 @@
 # comparative_analysis/compare.py with CGPS1_FILELIST_CSV and CGPS10_FILELIST_CSV set in the .env.
 # Only subjects with a percentage at both examinations are used. It prints n, the mean ± sd at each examination, the mean difference
 # (CGPS10 - CGPS1) with its 95% confidence interval, t and p, and saves them in <PROJECT_ROOT>/df/repeated_measures/rr_ttest.csv.
+# H0: The mean difference is zero (the scans are taken at the same point in the R-R interval).
 # e.g. uv run repeated_measures/rr_ttest.py
 #################################################################################################################################################
 

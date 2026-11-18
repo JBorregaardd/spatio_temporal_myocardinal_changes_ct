@@ -101,3 +101,22 @@ def test_add_phases_uses_series_of_linked_scan() -> None:
     assert pd.isna(table["CGPS10_rr_percent"].iloc[1])
     assert table["rr_percent_difference"].iloc[0] == pytest.approx(-3.0)
     assert not any(column.endswith("series_description") for column in table.columns)
+
+
+def test_add_phases_blank_description_is_not_filled_by_other_rows() -> None:
+    links = pd.DataFrame(
+        {
+            "Baseline NIFTI file": ["CGPS-1-august-2026_05070_SERIES0005"],
+            "Follow-up NIFTI file": ["CGPS-10y-august-2026_0730_SERIES0004_volume_1"],
+        }
+    )
+    filelists = {
+        "CGPS1": pd.DataFrame(
+            {
+                "PseudoID": ["CGPS-1-august-2026_05070", "CGPS-1-august-2026_05070"],
+                "SeriesDescription": [None, "HALF 264ms 0.90s PIQE 0.5 CE"],
+            }
+        )
+    }
+    table = add_phases(link_table(links), links, filelists)
+    assert pd.isna(table["CGPS1_rr_percent"].iloc[0])
