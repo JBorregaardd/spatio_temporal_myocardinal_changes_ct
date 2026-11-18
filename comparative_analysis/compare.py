@@ -30,8 +30,9 @@ DESCRIPTION_COLUMNS = {
     "CGPS1": ("Baseline SeriesDescription", "Baseline SeriesDescribtion"),
     "CGPS10": ("Follow-up SeriesDescription", "Follow-up SeriesDescribtion"),
 }
-LINK_FOUND_COLUMN = "Link_found (yes/no)"
+LINK_FOUND_COLUMN = "Link found (yes/no)"
 SCAN_TYPE_COLUMN = "Baseline scan type"
+FOLLOW_UP_SCAN_TYPE_COLUMN ="Follow-up scan type"
 SCAN_TYPE = "ED"
 LINKS_FILE = "CGPS1_CGPS10_links.csv"
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -121,7 +122,8 @@ def link_table(links: pd.DataFrame) -> pd.DataFrame:
 
     is_linked = links[LINK_FOUND_COLUMN].astype("string").str.strip().str.lower() == "yes"
     is_scan_type = links[SCAN_TYPE_COLUMN].astype("string").str.strip().str.upper() == SCAN_TYPE
-    linked = links[(is_linked & is_scan_type).fillna(False)]
+    follow_scan_type = links[FOLLOW_UP_SCAN_TYPE_COLUMN].astype("string").str.strip().str.upper() == SCAN_TYPE
+    linked = links[(is_linked & is_scan_type & follow_scan_type).fillna(False)]
     table = pd.DataFrame(
         {dataset: extract_ids(linked[column], DATASET_PREFIXES[dataset]) for dataset, column in LINK_COLUMNS.items()}
     )
