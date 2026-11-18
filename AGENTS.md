@@ -22,7 +22,9 @@
     spaghetti plots (one for women, one for men) are made with
     `uv run repeated_measures/spaghetti_plot.py --measurement lvm_g`; it needs
     `df/CGPS1_CGPS10_links.csv` (from `comparative_analysis/compare.py`, which also adds the point in the R-R interval
-    of each scan when `CGPS1_FILELIST_CSV` and `CGPS10_FILELIST_CSV` are set in `.env`) and each dataset's
+    of each scan when `CGPS1_FILELIST_CSV` and `CGPS10_FILELIST_CSV` are set in `.env`; a paired t-test of the two
+    R-R percentages is run with `uv run repeated_measures/rr_ttest.py`, saved in
+    `df/repeated_measures/rr_ttest.csv`) and each dataset's
     `output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv` (from `main_statistics_df.py`). The lines are
     coloured by `df/repeated_measures/CGPS1_HT.csv` (with the mean and 95% CI of each HT class on top), made with `uv run repeated_measures/ht_classifier.py
     --threshold-mm 15` (HT when the CGPS1 `lvm_average_thickness_mm` is above the threshold). The change
