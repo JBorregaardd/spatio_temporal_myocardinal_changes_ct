@@ -5,6 +5,7 @@ docs/site/
 /output/
 /df/
 /reports/figures/preprocessing
+/reports/
 
 # test cache
 manual_test/
