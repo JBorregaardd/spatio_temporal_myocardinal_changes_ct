@@ -2,8 +2,9 @@
 # This script computes the change (delta = CGPS10 - CGPS1) of every feature of the patient summary for the subjects scanned in both CGPS1
 # (baseline) and CGPS10 (10-year follow-up). The subjects are linked by <df>/CGPS1_CGPS10_links.csv, made by comparative_analysis/compare.py,
 # and the values are read from output/<dataset>_<mm>mm/statistics/statistics_patient_summary.csv of each dataset.
-# It saves one row per subject in <PROJECT_ROOT>/df/repeated_measures/deltas.csv with the ids, sex (from CGPS1, else CGPS10) and the
-# delta of each feature, and prints the n and mean ± sd of each delta.
+# It saves one row per subject in <PROJECT_ROOT>/df/repeated_measures/deltas.csv with the ids, sex (from CGPS1, else CGPS10), the
+# value of each feature at both examinations (<feature>_CGPS1, <feature>_CGPS10) and its delta (delta_<feature>), and prints the n and
+# mean ± sd of each delta.
 # A subject is kept when it is in both patient summaries; a delta is missing when the feature is missing at either examination.
 # e.g. uv run repeated_measures/deltas.py
 #################################################################################################################################################
@@ -51,8 +52,8 @@ def delta_table(summaries: dict[str, pd.DataFrame], links: pd.DataFrame, feature
         features: Feature columns to compute the change of.
 
     Returns:
-        One row per subject in both patient summaries with ``CGPS1``, ``CGPS10`` (the ids), ``sex`` and
-        ``delta_<feature>`` (CGPS10 - CGPS1) per feature.
+        One row per subject in both patient summaries with ``CGPS1``, ``CGPS10`` (the ids), ``sex`` and, per feature,
+        ``<feature>_CGPS1``, ``<feature>_CGPS10`` and ``delta_<feature>`` (CGPS10 - CGPS1).
     """
     table = links[list(DATASETS)].drop_duplicates()
     for dataset, summary in summaries.items():
@@ -61,10 +62,11 @@ def delta_table(summaries: dict[str, pd.DataFrame], links: pd.DataFrame, feature
         values = values.rename(columns={column: f"{column}_{dataset}" for column in columns if column != "patient_id"})
         table = table.merge(values, left_on=dataset, right_on="patient_id", how="inner").drop(columns="patient_id")
     table["sex"] = table["sex_CGPS1"].astype("Float64").fillna(table["sex_CGPS10"].astype("Float64"))
-    columns = ["CGPS1", "CGPS10", "sex"]
     for feature in features:
         table[f"delta_{feature}"] = table[f"{feature}_CGPS10"] - table[f"{feature}_CGPS1"]
-        columns.append(f"delta_{feature}")
+    columns = ["CGPS1", "CGPS10", "sex"]
+    for pattern in ["{}_CGPS1", "{}_CGPS10", "delta_{}"]:
+        columns += [pattern.format(feature) for feature in features]
     return table[columns].reset_index(drop=True)
 
 

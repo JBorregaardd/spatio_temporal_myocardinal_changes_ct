@@ -29,8 +29,9 @@
     coloured by `df/repeated_measures/CGPS1_HT.csv` (with the mean and 95% CI of each HT class on top), made with `uv run repeated_measures/ht_classifier.py
     --threshold-mm 15` (HT when the CGPS1 `lvm_average_thickness_mm` is above the threshold). The change
     (CGPS10 - CGPS1) of every patient summary feature is computed with `uv run repeated_measures/deltas.py`, saved
-    in `df/repeated_measures/deltas.csv`. Their correlation matrix is made in R with
-    `Rscript repeated_measures/delta_correlation.R pearson` (or `spearman`; needs the R package `corrplot`). The
+    in `df/repeated_measures/deltas.csv` (together with the CGPS1 and CGPS10 values). The correlation matrices of the
+    CGPS1 values, the CGPS10 values and the deltas of the linked subjects are made in one run in R with
+    `Rscript repeated_measures/correlation_matrix.R pearson` (or `spearman`; needs the R package `corrplot`). The
     bullseye plots of the change in median wall thickness (%) per AHA segment (1x4: women and men with HT, then
     without HT; apex greyed out) are made with `uv run repeated_measures/bullseye_delta.py`; it needs the links table,
     `CGPS1_HT.csv` and each dataset's `output/<dataset>_0mm/statistics/statistics_thickness_per_segment.csv` and
