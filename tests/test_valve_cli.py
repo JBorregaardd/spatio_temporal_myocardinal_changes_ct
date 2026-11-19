@@ -392,3 +392,30 @@ def test_find_disagreements_most_confident_first() -> None:
         {"case_id": "C", "label": 1, "pred": 0, "p_open": 0.05},
     ]
     assert [row["case_id"] for row in valve.find_disagreements(rows)] == ["C", "B"]
+
+
+def test_input_folder_prefers_option_then_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    option_dir, env_dir = tmp_path / "option", tmp_path / "env"
+    option_dir.mkdir()
+    env_dir.mkdir()
+    monkeypatch.setenv("IMAGE_FOLDER", str(env_dir))
+    assert valve.input_folder(str(option_dir), "IMAGE_FOLDER", "--images") == option_dir
+    assert valve.input_folder(None, "IMAGE_FOLDER", "--images") == env_dir
+
+
+def test_cli_classify_without_input_says_so(env: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(valve, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.delenv("IMAGE_FOLDER", raising=False)
+    result = CliRunner().invoke(valve.app, ["classify", "aortic"])
+    assert result.exit_code == 1
+    assert "No input: pass --images or set IMAGE_FOLDER" in result.output
+
+
+def test_classification_rows_marks_scans_without_prediction_failed() -> None:
+    scans = {"A": "a.nii.gz", "B": "b.nii.gz"}
+    predictions = [{"case_id": "A", "label": 0, "pred": 1, "p_open": 0.91}]
+    rows = valve.classification_rows(scans, predictions, "aortic", "run1")
+    assert [(row["scan_id"], row["prediction"], row["p_open"]) for row in rows] == [
+        ("A", "open", "0.9100"),
+        ("B", "failed", ""),
+    ]

@@ -295,6 +295,29 @@ uv run side_project/valve_planes/label_valves.py /data/Data/JERI/data/CGPS10_ED_
 - `label_valves.py --only` shows only the listed scans (several files can be given, e.g. one per valve). Labels are
   saved to `labels.csv` as usual. Afterwards export the crops again (step 2), retrain and test.
 
+## Step 7: Classify a new dataset
+
+```bash
+uv run side_project/valve_planes/valve.py classify aortic \
+    --images /storage/Data/DTU-CGPS-10y-august-2026/NIFTI \
+    --image-pattern "CGPS-10y-august-2026_{id}_*_volume_1.nii.gz" \
+    --segmentations /storage/Data/AortaExplorer/DTU-CGPS-10y-august-2026/Cardiac_ED_CE \
+    --segmentation-pattern "CGPS-10y-august-2026_{id}_*/segmentations/heartchambers_highres.nii.gz" \
+    --run CGPS10_ED
+```
+
+- Without `--images`, `--segmentations`, `--image-pattern` or `--segmentation-pattern` the values of `IMAGE_FOLDER`,
+  `SEGMENTATION_FOLDER`, `IMAGE_PATTERN` and `SEGMENTATION_PATTERN` in `.env` are used. If there is no images or
+  segmentations folder in either place, the command stops and says so.
+- It locates the valve planes (`valve_planes.py`), exports the crops and applies the ensemble of the fold models of the
+  latest run of the valve (`--model` picks another run). No labels are needed.
+- It writes `<VALVE_DATA_DIR>/classify/<run>/<run>_<valve>.csv` (`--output` for another folder) with one row per scan:
+  `scan_id`, `valve`, `prediction` (`open`, `closed`, or `failed` if no valve plane or crop could be made), `p_open`,
+  `image` and `model`. It prints how many scans had a closed and an open valve.
+- `--run` defaults to the name of the images folder. The valve planes and crops are kept in the output folder, so a
+  rerun, or `classify mitral` with the same `--run`, skips the scans that are already done. `--limit 5` is a quick test.
+- GloViTa prints accuracy and F1 during inference; with no labels these use placeholder labels and mean nothing.
+
 ## What to watch out for
 
 - **Class balance**: look at the counts from step 2. If one class has fewer than ~20 scans, the test split holds only

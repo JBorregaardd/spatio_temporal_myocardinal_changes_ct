@@ -18,6 +18,8 @@ never re-synced away and an active conda environment does not matter. Examples:
     uv run side_project/valve_planes/valve.py errors mitral
     uv run side_project/valve_planes/valve.py plots mitral
     uv run side_project/valve_planes/valve.py review mitral        # scans where the model and labels.csv disagree
+    uv run side_project/valve_planes/valve.py classify aortic --images <ct folder> --segmentations <seg folder> \
+        --run CGPS10_ED                                            # classify a new dataset, IMAGE_FOLDER etc. by default
 """
 from __future__ import annotations
 
@@ -1080,6 +1082,199 @@ def review(
     console.print(table)
     console.print(f"{len(wrong)} of {len(rows)} scans disagree. Scan ids: {ids_path}")
     console.print(f"Relabel: uv run side_project/valve_planes/label_valves.py {paths.planes_dir} --only {ids_path}")
+
+
+def input_folder(value: Optional[str], env_name: str, option: str) -> Path:
+    """Return a folder given on the command line, or else from ``.env``.
+
+    Args:
+        value: Command line value, or ``None``.
+        env_name: Variable in ``.env`` or the environment to fall back on, e.g. ``IMAGE_FOLDER``.
+        option: Name of the command line option, for the error message.
+
+    Returns:
+        The folder.
+
+    Raises:
+        typer.Exit: If neither is given or the folder does not exist.
+    """
+    value = value or os.environ.get(env_name)
+    if not value:
+        console.print(f"[red]No input: pass {option} or set {env_name} in {REPO_ROOT / '.env'}.[/red]")
+        raise typer.Exit(1)
+    folder = Path(value).expanduser()
+    if not folder.is_dir():
+        console.print(f"[red]{option} folder does not exist: {folder}[/red]")
+        raise typer.Exit(1)
+    return folder
+
+
+def export_inference_crops(planes_dir: Path, crops_root: Path, valve: str, scan_ids: list[str]) -> list[str]:
+    """Export the crops of one valve for unlabelled scans as a GloViTa dataset whose test split holds every scan.
+
+    GloViTa needs a label per scan, so every scan gets the placeholder label 0; it is not used.
+
+    Args:
+        planes_dir: Output folder of ``valve_planes.py`` with the ``<id>_valves.json`` files.
+        crops_root: Folder the ``<valve>`` dataset folder is written to.
+        valve: Valve name.
+        scan_ids: Scans to export.
+
+    Returns:
+        The scan ids with a crop, sorted.
+    """
+    from export_crops import CROP_RESOLUTION_MM, CROP_VOXELS, export_scan, scan_hu_window
+
+    exported = []
+    for scan_id in scan_ids:
+        metadata = read_json(planes_dir / f"{scan_id}_valves.json")
+        if metadata is None or scan_hu_window(metadata) is None:
+            continue
+        try:
+            export_scan(metadata, [valve], str(crops_root), CROP_VOXELS, CROP_RESOLUTION_MM, overwrite=False)
+            exported.append(scan_id)
+        except Exception as error:
+            console.print(f"[yellow]{scan_id}: crop failed - {type(error).__name__}: {error}[/yellow]")
+    exported.sort()
+    dataset_dir = crops_root / valve
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    (dataset_dir / "dataset.json").write_text(json.dumps({"num_classes": 2, "subtask": "multiclass"}, indent=2))
+    (dataset_dir / "labels.json").write_text(json.dumps({scan: 0 for scan in exported}, indent=2))
+    (dataset_dir / "splits.json").write_text(json.dumps({"train": exported, "val": exported, "test": exported}))
+    return exported
+
+
+def classification_rows(
+    scans: dict[str, str], predictions: list[dict[str, Any]], valve: str, model: str
+) -> list[dict[str, Any]]:
+    """Combine the scans and their predictions into one row per scan.
+
+    Args:
+        scans: Scan id to CT path, from ``valve_planes.find_scans``.
+        predictions: Per-scan predictions from ``read_predictions``; their labels are placeholders and ignored.
+        valve: Valve name.
+        model: Name of the trained run that made the predictions.
+
+    Returns:
+        Rows with ``scan_id``, ``valve``, ``prediction`` (``open``, ``closed`` or ``failed`` when no valve crop could
+        be made), ``p_open``, ``image`` and ``model``.
+    """
+    by_scan = {row["case_id"]: row for row in predictions}
+    rows = []
+    for scan_id, image in scans.items():
+        row = by_scan.get(scan_id)
+        rows.append(
+            {
+                "scan_id": scan_id,
+                "valve": valve,
+                "prediction": LABEL_NAMES[row["pred"]] if row else "failed",
+                "p_open": f"{row['p_open']:.4f}" if row else "",
+                "image": image,
+                "model": model,
+            }
+        )
+    return rows
+
+
+@app.command()
+def classify(
+    valve: Valve = typer.Argument(..., help="Valve to classify."),
+    images: Optional[str] = typer.Option(None, help="Folder with the CT scans; default IMAGE_FOLDER in .env."),
+    segmentations: Optional[str] = typer.Option(
+        None, help="Folder with the TotalSegmentator heartchambers_highres segmentations; default SEGMENTATION_FOLDER."
+    ),
+    image_pattern: Optional[str] = typer.Option(
+        None, help="CT file name pattern, {id} marks the scan id; default IMAGE_PATTERN in .env, else {id}.img.nii.gz."
+    ),
+    segmentation_pattern: Optional[str] = typer.Option(
+        None, help="Segmentation file name pattern; default SEGMENTATION_PATTERN in .env, else {id}.heart.nii.gz."
+    ),
+    run: Optional[str] = typer.Option(
+        None, "--run", help="Name of this classification, used for the CSV, e.g. CGPS10_ED; default the images folder."
+    ),
+    model: Optional[str] = typer.Option(
+        None, help="Trained run folder name or a unique part of it; default: the latest run of the valve."
+    ),
+    output: Optional[str] = typer.Option(None, help="Output folder; default <VALVE_DATA_DIR>/classify/<run>."),
+    limit: int = typer.Option(0, help="Only classify the first N scans (0 classifies all)."),
+) -> None:
+    """Classify one valve as open or closed in every scan of a dataset with a trained run.
+
+    The valve planes are located from the segmentations, the valve crops exported and the ensemble of the fold
+    models of the run applied. Writes ``<run>_<valve>.csv`` with one row per scan. Planes and crops are kept in the
+    output folder, so a rerun, or the other valve with the same ``--run``, skips the scans already done.
+    """
+    import valve_planes
+
+    paths = load_paths()
+    image_dir = input_folder(images, "IMAGE_FOLDER", "--images")
+    segmentation_dir = input_folder(segmentations, "SEGMENTATION_FOLDER", "--segmentations")
+    image_pattern = image_pattern or os.environ.get("IMAGE_PATTERN") or "{id}.img.nii.gz"
+    segmentation_pattern = segmentation_pattern or os.environ.get("SEGMENTATION_PATTERN") or "{id}.heart.nii.gz"
+    run_name = run or image_dir.name
+    out_dir = Path(output).expanduser() if output else paths.data_dir / "classify" / run_name
+    selected = select_experiment(paths, valve.value, model)
+    if len(selected.trained_folds) < selected.n_folds:
+        console.print(
+            f"[red]Only {len(selected.trained_folds)} of {selected.n_folds} folds have a best checkpoint.[/red]"
+        )
+        raise typer.Exit(1)
+    require(paths.python, "Set up GloViTa first (REMOTE_TRAINING.md, step 3).")
+
+    scans = valve_planes.find_scans(str(image_dir), image_pattern)
+    if limit > 0:
+        scans = dict(list(scans.items())[:limit])
+    if not scans:
+        console.print(f"[red]No scans matching {image_pattern!r} in {image_dir}.[/red]")
+        raise typer.Exit(1)
+    console.print(f"Run: {run_name}\nModel: {selected.name}\nImages: {image_dir} ({image_pattern}), {len(scans)} scans")
+    console.print(f"Segmentations: {segmentation_dir} ({segmentation_pattern})\nOutput: {out_dir}")
+
+    planes_dir = out_dir / "valve_planes"
+    valve_planes.main(
+        image_folder=str(image_dir),
+        segmentation_folder=str(segmentation_dir),
+        output_folder=str(planes_dir),
+        image_pattern=image_pattern,
+        segmentation_pattern=segmentation_pattern,
+        totalsegmentator="TotalSegmentator",
+        overwrite=False,
+        limit=limit,
+    )
+    crops_root = out_dir / "crops"
+    exported = export_inference_crops(planes_dir, crops_root, valve.value, list(scans))
+    if not exported:
+        console.print(f"[red]No {valve.value} crops could be made; see {planes_dir / 'valve_planes.log'}.[/red]")
+        raise typer.Exit(1)
+
+    pred_path, raw_csv = out_dir / f"{valve.value}_predictions.pt", out_dir / f"{valve.value}_predictions_raw.csv"
+    infer = [
+        str(paths.python), "-c", INFER_ENTRY,
+        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
+        "--pred_output", str(pred_path),
+        "data:generic3d_dataset_config", "--data.data_root_dir", str(crops_root / valve.value),
+    ]  # fmt: skip
+    console.print(f"Predicting {len(exported)} scans (the metrics GloViTa prints use placeholder labels; ignore them)")
+    if launch(infer, paths.glovita_dir, None):
+        raise typer.Exit(1)
+    if launch([str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(raw_csv)], HERE, None):
+        raise typer.Exit(1)
+
+    rows = classification_rows(scans, read_predictions(raw_csv), valve.value, selected.short_name)
+    csv_path = out_dir / f"{run_name}_{valve.value}.csv"
+    with open(csv_path, "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    counts = Counter(row["prediction"] for row in rows)
+    table = Table("prediction", "scans", "%", title=f"{run_name}: {valve.value} valve")
+    for name in ("closed", "open", "failed"):
+        if counts[name] or name != "failed":
+            table.add_row(name, str(counts[name]), f"{100 * counts[name] / len(rows):.1f}")
+    table.add_row("total", str(len(rows)), "100.0", style="bold")
+    console.print(table)
+    console.print(f"Classifications: {csv_path}")
 
 
 @app.command()
