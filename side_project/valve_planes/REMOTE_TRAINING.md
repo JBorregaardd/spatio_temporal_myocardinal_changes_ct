@@ -298,7 +298,7 @@ uv run side_project/valve_planes/label_valves.py /data/Data/JERI/data/CGPS10_ED_
 ## Step 7: Classify a new dataset
 
 ```bash
-uv run side_project/valve_planes/valve.py classify aortic \
+uv run side_project/valve_planes/valve.py classify \
     --images /storage/Data/DTU-CGPS-10y-august-2026/NIFTI \
     --image-pattern "CGPS-10y-august-2026_{id}_*_volume_1.nii.gz" \
     --segmentations /storage/Data/AortaExplorer/DTU-CGPS-10y-august-2026/Cardiac_ED_CE \
@@ -306,17 +306,24 @@ uv run side_project/valve_planes/valve.py classify aortic \
     --run CGPS10_ED
 ```
 
+- Both valves are classified by default; `classify aortic` or `classify mitral` does only one.
 - Without `--images`, `--segmentations`, `--image-pattern` or `--segmentation-pattern` the values of `IMAGE_FOLDER`,
   `SEGMENTATION_FOLDER`, `IMAGE_PATTERN` and `SEGMENTATION_PATTERN` in `.env` are used. If there is no images or
   segmentations folder in either place, the command stops and says so.
-- It locates the valve planes (`valve_planes.py`), exports the crops and applies the ensemble of the fold models of the
-  latest run of the valve (`--model` picks another run). No labels are needed.
-- It writes `<VALVE_DATA_DIR>/classify/<run>/<run>_<valve>.csv` (`--output` for another folder) with one row per scan:
-  `scan_id`, `valve`, `prediction` (`open`, `closed`, or `failed` if no valve plane or crop could be made), `p_open`,
-  `image` and `model`. It prints how many scans had a closed and an open valve.
+- Per scan, one worker process reads the CT once, locates both valve planes (`valve_planes.py`) and writes the crop of
+  each valve. `--workers 8` by default (at most the number of CPU cores); each worker holds a CT and its distance
+  transforms in memory, roughly 2-4 GB, so lower `--workers` if the machine runs out of memory. Scans that fail (e.g.
+  no segmentation) are listed in `failed.csv`.
+- Then the ensemble of the fold models of the latest run of each valve is applied (`--aortic-model` and
+  `--mitral-model` pick other runs). The two valves are predicted at the same time on the GPU; if it runs out of GPU
+  memory, pass `--sequential-inference`. The GloViTa output goes to `<valve>_inference.log`; the accuracy and F1 it
+  prints use placeholder labels and mean nothing. No labels are needed.
+- It writes `<VALVE_DATA_DIR>/classify/<run>/<run>.csv` (`--output` for another folder) with one row per scan:
+  `scan_id`, `aortic`, `aortic_p_open`, `mitral`, `mitral_p_open` and `image`, where the valve columns are `open`,
+  `closed`, or `failed` if no valve plane or crop could be made. The models and counts go to `<run>_summary.json`.
+  It prints how many scans had each valve closed and open, and a table of the aortic and mitral states together.
 - `--run` defaults to the name of the images folder. The valve planes and crops are kept in the output folder, so a
-  rerun, or `classify mitral` with the same `--run`, skips the scans that are already done. `--limit 5` is a quick test.
-- GloViTa prints accuracy and F1 during inference; with no labels these use placeholder labels and mean nothing.
+  rerun with the same `--run` skips the scans that are already done. `--limit 5` is a quick test.
 
 ## What to watch out for
 

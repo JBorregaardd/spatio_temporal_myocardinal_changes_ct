@@ -15,9 +15,10 @@
     `tasks.py` file.
 * The valve open/closed classifier side project is trained and tested with GloViTa (a separate clone) through
     `uv run side_project/valve_planes/valve.py <command>` (`check`, `smoke`, `train`, `logs`, `runs`, `test`,
-    `errors`, `plots`, `review`, `classify`). `classify <valve> --images <ct folder> --segmentations <seg folder>
-    --run <name>` classifies a new unlabelled dataset (defaults: `IMAGE_FOLDER`, `SEGMENTATION_FOLDER`, `IMAGE_PATTERN`,
-    `SEGMENTATION_PATTERN` in `.env`) and writes `<VALVE_DATA_DIR>/classify/<run>/<run>_<valve>.csv`. `review` lists the labelled scans where the model disagrees with `labels.csv`; relabel
+    `errors`, `plots`, `review`, `classify`). `classify --images <ct folder> --segmentations <seg folder>
+    --run <name> --workers 8` classifies both valves of a new unlabelled dataset in parallel (defaults: `IMAGE_FOLDER`,
+    `SEGMENTATION_FOLDER`, `IMAGE_PATTERN`, `SEGMENTATION_PATTERN` in `.env`) and writes
+    `<VALVE_DATA_DIR>/classify/<run>/<run>.csv` with an open/closed column per valve. `review` lists the labelled scans where the model disagrees with `labels.csv`; relabel
     them with `uv run side_project/valve_planes/label_valves.py <planes folder> --only <ids file>`. Settings are in `side_project/valve_planes/valve_config.yaml`, paths in `.env`
     (`VALVE_DATA_DIR`, `GLOVITA_DIR`, optional `VALVE_PLANES_DIR`). See `side_project/valve_planes/REMOTE_TRAINING.md`.
 * Repeated measures statistics between CGPS1 (baseline) and CGPS10 (follow-up) live in `repeated_measures/`. The

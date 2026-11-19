@@ -18,8 +18,8 @@ never re-synced away and an active conda environment does not matter. Examples:
     uv run side_project/valve_planes/valve.py errors mitral
     uv run side_project/valve_planes/valve.py plots mitral
     uv run side_project/valve_planes/valve.py review mitral        # scans where the model and labels.csv disagree
-    uv run side_project/valve_planes/valve.py classify aortic --images <ct folder> --segmentations <seg folder> \
-        --run CGPS10_ED                                            # classify a new dataset, IMAGE_FOLDER etc. by default
+    uv run side_project/valve_planes/valve.py classify --images <ct folder> --segmentations <seg folder> \
+        --run CGPS10_ED                         # both valves of a new dataset; IMAGE_FOLDER etc. from .env by default
 """
 from __future__ import annotations
 
@@ -1102,83 +1102,218 @@ def input_folder(value: Optional[str], env_name: str, option: str) -> Path:
     if not value:
         console.print(f"[red]No input: pass {option} or set {env_name} in {REPO_ROOT / '.env'}.[/red]")
         raise typer.Exit(1)
-    folder = Path(value).expanduser()
+    folder = Path(value).expanduser().absolute()
     if not folder.is_dir():
         console.print(f"[red]{option} folder does not exist: {folder}[/red]")
         raise typer.Exit(1)
     return folder
 
 
-def export_inference_crops(planes_dir: Path, crops_root: Path, valve: str, scan_ids: list[str]) -> list[str]:
-    """Export the crops of one valve for unlabelled scans as a GloViTa dataset whose test split holds every scan.
+def write_inference_dataset(dataset_dir: Path, scan_ids: list[str]) -> None:
+    """Write the GloViTa dataset files of unlabelled crops, with every scan in the test split.
 
     GloViTa needs a label per scan, so every scan gets the placeholder label 0; it is not used.
 
     Args:
-        planes_dir: Output folder of ``valve_planes.py`` with the ``<id>_valves.json`` files.
-        crops_root: Folder the ``<valve>`` dataset folder is written to.
-        valve: Valve name.
-        scan_ids: Scans to export.
-
-    Returns:
-        The scan ids with a crop, sorted.
+        dataset_dir: Dataset folder of one valve, holding ``images/<id>.b2nd``.
+        scan_ids: Scans with a crop.
     """
-    from export_crops import CROP_RESOLUTION_MM, CROP_VOXELS, export_scan, scan_hu_window
-
-    exported = []
-    for scan_id in scan_ids:
-        metadata = read_json(planes_dir / f"{scan_id}_valves.json")
-        if metadata is None or scan_hu_window(metadata) is None:
-            continue
-        try:
-            export_scan(metadata, [valve], str(crops_root), CROP_VOXELS, CROP_RESOLUTION_MM, overwrite=False)
-            exported.append(scan_id)
-        except Exception as error:
-            console.print(f"[yellow]{scan_id}: crop failed - {type(error).__name__}: {error}[/yellow]")
-    exported.sort()
-    dataset_dir = crops_root / valve
     dataset_dir.mkdir(parents=True, exist_ok=True)
     (dataset_dir / "dataset.json").write_text(json.dumps({"num_classes": 2, "subtask": "multiclass"}, indent=2))
-    (dataset_dir / "labels.json").write_text(json.dumps({scan: 0 for scan in exported}, indent=2))
-    (dataset_dir / "splits.json").write_text(json.dumps({"train": exported, "val": exported, "test": exported}))
+    (dataset_dir / "labels.json").write_text(json.dumps({scan: 0 for scan in scan_ids}, indent=2))
+    (dataset_dir / "splits.json").write_text(json.dumps({"train": scan_ids, "val": scan_ids, "test": scan_ids}))
+
+
+def export_inference_crops(
+    scans: dict[str, str],
+    segmentation_folder: Path,
+    segmentation_pattern: str,
+    out_dir: Path,
+    valves: list[str],
+    workers: int,
+) -> dict[str, list[str]]:
+    """Locate the valve planes and export the crops of the valves for unlabelled scans, in parallel processes.
+
+    Each worker handles one scan: it reads the CT once, locates both valves and writes the crop of every valve.
+    Scans whose crops all exist are skipped. Failures are written to ``<out_dir>/failed.csv``.
+
+    Args:
+        scans: Scan id to CT path.
+        segmentation_folder: Folder with the TotalSegmentator segmentations.
+        segmentation_pattern: Segmentation file name pattern.
+        out_dir: Output folder; planes go to ``valve_planes/``, crops to ``crops/<valve>/``.
+        valves: Valve names.
+        workers: Number of worker processes; 1 runs in this process.
+
+    Returns:
+        Valve name to the sorted scan ids with a crop of that valve.
+    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    from rich.progress import Progress
+
+    from export_crops import prepare_inference_scan, single_threaded_worker
+
+    planes_dir, crops_root = out_dir / "valve_planes", out_dir / "crops"
+
+    def has_crop(scan_id: str, valve: str) -> bool:
+        return (crops_root / valve / "images" / f"{scan_id}.b2nd").exists()
+
+    todo = [scan for scan in scans if not all(has_crop(scan, valve) for valve in valves)]
+    console.print(f"{len(scans) - len(todo)} scans already done; preparing {len(todo)} scans with {workers} workers")
+    failed: dict[str, str] = {}
+    with Progress(console=console) as progress:
+        task = progress.add_task("Valve planes and crops", total=len(todo))
+
+        def finish(scan_id: str, error: Optional[str]) -> None:
+            if error:
+                failed[scan_id] = error
+                progress.console.print(f"[yellow]{scan_id}: failed - {error}[/yellow]")
+            progress.advance(task)
+
+        common = (str(segmentation_folder), segmentation_pattern, str(planes_dir), str(crops_root), valves)
+        arguments = {scan: (scan, scans[scan], *common) for scan in todo}
+        if workers <= 1:
+            for scan, args in arguments.items():
+                finish(scan, prepare_inference_scan(*args))
+        else:
+            with ProcessPoolExecutor(max_workers=workers, initializer=single_threaded_worker) as pool:
+                futures = {pool.submit(prepare_inference_scan, *args): scan for scan, args in arguments.items()}
+                for future in as_completed(futures):
+                    finish(futures[future], future.result())
+    if failed:
+        with open(out_dir / "failed.csv", "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["scan_id", "error"])
+            writer.writerows(sorted(failed.items()))
+    exported = {valve: sorted(scan for scan in scans if has_crop(scan, valve)) for valve in valves}
+    for valve, scan_ids in exported.items():
+        write_inference_dataset(crops_root / valve, scan_ids)
     return exported
 
 
-def classification_rows(
-    scans: dict[str, str], predictions: list[dict[str, Any]], valve: str, model: str
-) -> list[dict[str, Any]]:
-    """Combine the scans and their predictions into one row per scan.
+def infer_valve(paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir: Path, valve: str) -> Optional[Path]:
+    """Apply the ensemble of the fold models of a run to an unlabelled crop dataset, logging to a file.
+
+    Args:
+        paths: Data and GloViTa locations.
+        experiment: Trained run.
+        dataset_dir: GloViTa dataset folder of the crops.
+        out_dir: Folder for ``<valve>_predictions.pt``, ``<valve>_predictions_raw.csv`` and ``<valve>_inference.log``.
+        valve: Valve name.
+
+    Returns:
+        The predictions CSV, or ``None`` if a step failed (see the log).
+    """
+    pred_path, csv_path = out_dir / f"{valve}_predictions.pt", out_dir / f"{valve}_predictions_raw.csv"
+    infer = [
+        str(paths.python), "-c", INFER_ENTRY,
+        "--exp_dir", str(experiment.path), "--checkpoint", "best", "--metrics", "acc", "f1",
+        "--pred_output", str(pred_path),
+        "data:generic3d_dataset_config", "--data.data_root_dir", str(dataset_dir),
+    ]  # fmt: skip
+    to_csv = [str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)]
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    with open(out_dir / f"{valve}_inference.log", "w") as log:
+        for command, cwd in ((infer, paths.glovita_dir), (to_csv, HERE)):
+            log.write(f"$ cd {cwd}\n$ {shlex.join(command)}\n\n")
+            log.flush()
+            if subprocess.run(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT).returncode:
+                return None
+    return csv_path
+
+
+def run_inference(
+    paths: Paths, models: dict[str, Experiment], out_dir: Path, parallel: bool
+) -> dict[str, list[dict[str, Any]]]:
+    """Run ``infer_valve`` for every valve, at the same time when ``parallel``.
+
+    Args:
+        paths: Data and GloViTa locations.
+        models: Valve name to trained run.
+        out_dir: Output folder holding ``crops/<valve>/``.
+        parallel: Run the valves at the same time (on the same GPU) instead of one after the other.
+
+    Returns:
+        Valve name to per-scan predictions from ``read_predictions``.
+
+    Raises:
+        typer.Exit: If the inference of a valve failed.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    console.print(
+        f"Predicting {', '.join(models)} {'in parallel' if parallel else 'one after the other'} "
+        f"(logs: {out_dir}/<valve>_inference.log; their metrics use placeholder labels, ignore them)"
+    )
+    with ThreadPoolExecutor(max_workers=len(models) if parallel else 1) as pool:
+        futures = {
+            valve: pool.submit(infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve)
+            for valve, model in models.items()
+        }
+        results = {valve: future.result() for valve, future in futures.items()}
+    for valve, csv_path in results.items():
+        if csv_path is None:
+            log_lines = (out_dir / f"{valve}_inference.log").read_text().splitlines()
+            console.print(f"[red]{valve} inference failed:[/red]\n" + "\n".join(log_lines[-15:]))
+    if any(csv_path is None for csv_path in results.values()):
+        raise typer.Exit(1)
+    return {valve: read_predictions(csv_path) for valve, csv_path in results.items()}
+
+
+def classification_rows(scans: dict[str, str], predictions: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Combine the scans and the predictions of every valve into one row per scan.
 
     Args:
         scans: Scan id to CT path, from ``valve_planes.find_scans``.
-        predictions: Per-scan predictions from ``read_predictions``; their labels are placeholders and ignored.
-        valve: Valve name.
-        model: Name of the trained run that made the predictions.
+        predictions: Valve name to per-scan predictions from ``read_predictions``; their labels are placeholders.
 
     Returns:
-        Rows with ``scan_id``, ``valve``, ``prediction`` (``open``, ``closed`` or ``failed`` when no valve crop could
-        be made), ``p_open``, ``image`` and ``model``.
+        Rows with ``scan_id``, per valve ``<valve>`` (``open``, ``closed`` or ``failed`` when no crop could be made)
+        and ``<valve>_p_open``, and ``image``.
     """
-    by_scan = {row["case_id"]: row for row in predictions}
+    by_valve = {valve: {row["case_id"]: row for row in rows} for valve, rows in predictions.items()}
     rows = []
     for scan_id, image in scans.items():
-        row = by_scan.get(scan_id)
-        rows.append(
-            {
-                "scan_id": scan_id,
-                "valve": valve,
-                "prediction": LABEL_NAMES[row["pred"]] if row else "failed",
-                "p_open": f"{row['p_open']:.4f}" if row else "",
-                "image": image,
-                "model": model,
-            }
-        )
+        row: dict[str, Any] = {"scan_id": scan_id}
+        for valve, by_scan in by_valve.items():
+            prediction = by_scan.get(scan_id)
+            row[valve] = LABEL_NAMES[prediction["pred"]] if prediction else "failed"
+            row[f"{valve}_p_open"] = f"{prediction['p_open']:.4f}" if prediction else ""
+        row["image"] = image
+        rows.append(row)
     return rows
+
+
+def print_classification_counts(rows: list[dict[str, Any]], valves: list[str], run_name: str) -> None:
+    """Print how many scans each valve was closed and open in, and with two valves their combinations.
+
+    Args:
+        rows: Rows from ``classification_rows``.
+        valves: Valve names.
+        run_name: Name of the classification run, for the titles.
+    """
+    states = ["closed", "open"]
+    if any(row[valve] == "failed" for row in rows for valve in valves):
+        states.append("failed")
+    table = Table("valve", *states, "total", title=f"{run_name}: scans per prediction")
+    for valve in valves:
+        counts = Counter(row[valve] for row in rows)
+        cells = [f"{counts[state]} ({100 * counts[state] / len(rows):.1f}%)" for state in states]
+        table.add_row(valve, *cells, str(len(rows)))
+    console.print(table)
+    if len(valves) == 2:
+        first, second = valves
+        pairs = Counter((row[first], row[second]) for row in rows)
+        crosstab = Table(f"{first} \\ {second}", *states, title=f"{run_name}: {first} and {second} together")
+        for state in states:
+            crosstab.add_row(state, *[str(pairs[(state, other)]) for other in states])
+        console.print(crosstab)
 
 
 @app.command()
 def classify(
-    valve: Valve = typer.Argument(..., help="Valve to classify."),
+    valves: Optional[list[Valve]] = typer.Argument(None, help="Valves to classify; default both."),
     images: Optional[str] = typer.Option(None, help="Folder with the CT scans; default IMAGE_FOLDER in .env."),
     segmentations: Optional[str] = typer.Option(
         None, help="Folder with the TotalSegmentator heartchambers_highres segmentations; default SEGMENTATION_FOLDER."
@@ -1192,33 +1327,48 @@ def classify(
     run: Optional[str] = typer.Option(
         None, "--run", help="Name of this classification, used for the CSV, e.g. CGPS10_ED; default the images folder."
     ),
-    model: Optional[str] = typer.Option(
-        None, help="Trained run folder name or a unique part of it; default: the latest run of the valve."
+    aortic_model: Optional[str] = typer.Option(
+        None, help="Trained aortic run folder name or a unique part of it; default: the latest aortic run."
+    ),
+    mitral_model: Optional[str] = typer.Option(
+        None, help="Trained mitral run folder name or a unique part of it; default: the latest mitral run."
     ),
     output: Optional[str] = typer.Option(None, help="Output folder; default <VALVE_DATA_DIR>/classify/<run>."),
     limit: int = typer.Option(0, help="Only classify the first N scans (0 classifies all)."),
+    workers: int = typer.Option(
+        min(8, os.cpu_count() or 1), min=1, help="Parallel processes for the valve planes and crops (~2-4 GB RAM each)."
+    ),
+    parallel_inference: bool = typer.Option(
+        True, "--parallel-inference/--sequential-inference", help="Run the GloViTa inference of the valves at once."
+    ),
 ) -> None:
-    """Classify one valve as open or closed in every scan of a dataset with a trained run.
+    """Classify the aortic and mitral valve as open or closed in every scan of a dataset with trained runs.
 
-    The valve planes are located from the segmentations, the valve crops exported and the ensemble of the fold
-    models of the run applied. Writes ``<run>_<valve>.csv`` with one row per scan. Planes and crops are kept in the
-    output folder, so a rerun, or the other valve with the same ``--run``, skips the scans already done.
+    Per scan the valve planes are located from the segmentation and the crops of both valves exported, in parallel
+    processes; then the ensemble of the fold models of each valve's run is applied. Writes ``<run>.csv`` with one row
+    per scan and a column per valve. Planes and crops are kept in the output folder, so a rerun skips the scans
+    already done.
     """
     import valve_planes
 
     paths = load_paths()
+    chosen = {valve.value for valve in valves} if valves else {valve.value for valve in Valve}
+    valve_names = [valve.value for valve in Valve if valve.value in chosen]
     image_dir = input_folder(images, "IMAGE_FOLDER", "--images")
     segmentation_dir = input_folder(segmentations, "SEGMENTATION_FOLDER", "--segmentations")
     image_pattern = image_pattern or os.environ.get("IMAGE_PATTERN") or "{id}.img.nii.gz"
     segmentation_pattern = segmentation_pattern or os.environ.get("SEGMENTATION_PATTERN") or "{id}.heart.nii.gz"
     run_name = run or image_dir.name
     out_dir = Path(output).expanduser() if output else paths.data_dir / "classify" / run_name
-    selected = select_experiment(paths, valve.value, model)
-    if len(selected.trained_folds) < selected.n_folds:
-        console.print(
-            f"[red]Only {len(selected.trained_folds)} of {selected.n_folds} folds have a best checkpoint.[/red]"
-        )
-        raise typer.Exit(1)
+    model_names = {"aortic": aortic_model, "mitral": mitral_model}
+    models = {valve: select_experiment(paths, valve, model_names[valve]) for valve in valve_names}
+    for valve, model in models.items():
+        if len(model.trained_folds) < model.n_folds:
+            console.print(
+                f"[red]Only {len(model.trained_folds)} of {model.n_folds} folds of the {valve} run {model.name} "
+                "have a best checkpoint.[/red]"
+            )
+            raise typer.Exit(1)
     require(paths.python, "Set up GloViTa first (REMOTE_TRAINING.md, step 3).")
 
     scans = valve_planes.find_scans(str(image_dir), image_pattern)
@@ -1227,53 +1377,37 @@ def classify(
     if not scans:
         console.print(f"[red]No scans matching {image_pattern!r} in {image_dir}.[/red]")
         raise typer.Exit(1)
-    console.print(f"Run: {run_name}\nModel: {selected.name}\nImages: {image_dir} ({image_pattern}), {len(scans)} scans")
+    console.print(f"Run: {run_name}\nImages: {image_dir} ({image_pattern}), {len(scans)} scans")
     console.print(f"Segmentations: {segmentation_dir} ({segmentation_pattern})\nOutput: {out_dir}")
+    for valve, model in models.items():
+        console.print(f"{valve.capitalize()} model: {model.name}")
 
-    planes_dir = out_dir / "valve_planes"
-    valve_planes.main(
-        image_folder=str(image_dir),
-        segmentation_folder=str(segmentation_dir),
-        output_folder=str(planes_dir),
-        image_pattern=image_pattern,
-        segmentation_pattern=segmentation_pattern,
-        totalsegmentator="TotalSegmentator",
-        overwrite=False,
-        limit=limit,
-    )
-    crops_root = out_dir / "crops"
-    exported = export_inference_crops(planes_dir, crops_root, valve.value, list(scans))
-    if not exported:
-        console.print(f"[red]No {valve.value} crops could be made; see {planes_dir / 'valve_planes.log'}.[/red]")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    exported = export_inference_crops(scans, segmentation_dir, segmentation_pattern, out_dir, valve_names, workers)
+    empty = [valve for valve, scan_ids in exported.items() if not scan_ids]
+    if empty:
+        console.print(f"[red]No {' or '.join(empty)} crops could be made; see {out_dir / 'failed.csv'}.[/red]")
         raise typer.Exit(1)
+    predictions = run_inference(paths, models, out_dir, parallel_inference)
 
-    pred_path, raw_csv = out_dir / f"{valve.value}_predictions.pt", out_dir / f"{valve.value}_predictions_raw.csv"
-    infer = [
-        str(paths.python), "-c", INFER_ENTRY,
-        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
-        "--pred_output", str(pred_path),
-        "data:generic3d_dataset_config", "--data.data_root_dir", str(crops_root / valve.value),
-    ]  # fmt: skip
-    console.print(f"Predicting {len(exported)} scans (the metrics GloViTa prints use placeholder labels; ignore them)")
-    if launch(infer, paths.glovita_dir, None):
-        raise typer.Exit(1)
-    if launch([str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(raw_csv)], HERE, None):
-        raise typer.Exit(1)
-
-    rows = classification_rows(scans, read_predictions(raw_csv), valve.value, selected.short_name)
-    csv_path = out_dir / f"{run_name}_{valve.value}.csv"
+    rows = classification_rows(scans, predictions)
+    csv_path = out_dir / f"{run_name}.csv"
     with open(csv_path, "w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-
-    counts = Counter(row["prediction"] for row in rows)
-    table = Table("prediction", "scans", "%", title=f"{run_name}: {valve.value} valve")
-    for name in ("closed", "open", "failed"):
-        if counts[name] or name != "failed":
-            table.add_row(name, str(counts[name]), f"{100 * counts[name] / len(rows):.1f}")
-    table.add_row("total", str(len(rows)), "100.0", style="bold")
-    console.print(table)
+    summary = {
+        "run": run_name,
+        "images": str(image_dir),
+        "image_pattern": image_pattern,
+        "segmentations": str(segmentation_dir),
+        "segmentation_pattern": segmentation_pattern,
+        "models": {valve: str(model.path) for valve, model in models.items()},
+        "counts": {valve: dict(Counter(row[valve] for row in rows)) for valve in valve_names},
+        "created": f"{datetime.now():%Y-%m-%d %H:%M:%S}",
+    }
+    (out_dir / f"{run_name}_summary.json").write_text(json.dumps(summary, indent=2))
+    print_classification_counts(rows, valve_names, run_name)
     console.print(f"Classifications: {csv_path}")
 
 

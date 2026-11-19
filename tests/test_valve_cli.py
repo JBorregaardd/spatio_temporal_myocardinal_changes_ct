@@ -411,11 +411,31 @@ def test_cli_classify_without_input_says_so(env: tuple[Path, Path], monkeypatch:
     assert "No input: pass --images or set IMAGE_FOLDER" in result.output
 
 
-def test_classification_rows_marks_scans_without_prediction_failed() -> None:
+def test_classification_rows_has_a_column_per_valve_and_marks_failures() -> None:
     scans = {"A": "a.nii.gz", "B": "b.nii.gz"}
-    predictions = [{"case_id": "A", "label": 0, "pred": 1, "p_open": 0.91}]
-    rows = valve.classification_rows(scans, predictions, "aortic", "run1")
-    assert [(row["scan_id"], row["prediction"], row["p_open"]) for row in rows] == [
-        ("A", "open", "0.9100"),
-        ("B", "failed", ""),
+    predictions = {
+        "aortic": [{"case_id": "A", "label": 0, "pred": 1, "p_open": 0.91}],
+        "mitral": [
+            {"case_id": "A", "label": 0, "pred": 0, "p_open": 0.02},
+            {"case_id": "B", "label": 0, "pred": 1, "p_open": 0.7},
+        ],
+    }
+    rows = valve.classification_rows(scans, predictions)
+    assert rows == [
+        {"scan_id": "A", "aortic": "open", "aortic_p_open": "0.9100", "mitral": "closed", "mitral_p_open": "0.0200",
+         "image": "a.nii.gz"},
+        {"scan_id": "B", "aortic": "failed", "aortic_p_open": "", "mitral": "open", "mitral_p_open": "0.7000",
+         "image": "b.nii.gz"},
+    ]  # fmt: skip
+
+
+def test_print_classification_counts_shows_both_valves_together(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = [
+        {"scan_id": "A", "aortic": "open", "mitral": "closed"},
+        {"scan_id": "B", "aortic": "closed", "mitral": "open"},
+        {"scan_id": "C", "aortic": "closed", "mitral": "open"},
     ]
+    valve.print_classification_counts(rows, ["aortic", "mitral"], "run1")
+    output = capsys.readouterr().out
+    assert "2 (66.7%)" in output
+    assert "aortic and mitral together" in output

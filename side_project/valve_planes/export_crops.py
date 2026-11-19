@@ -234,20 +234,88 @@ def save_b2nd(array: np.ndarray, path: str) -> None:
 
 
 def export_scan(
-    metadata: dict, valve_names: list[str], output_folder: str, crop_voxels: int, resolution_mm: float, overwrite: bool
+    metadata: dict,
+    valve_names: list[str],
+    output_folder: str,
+    crop_voxels: int,
+    resolution_mm: float,
+    overwrite: bool,
+    ct: sitk.Image | None = None,
 ) -> None:
-    """Write the normalised crops of one scan to ``<output_folder>/<valve>/images/<id>.b2nd``."""
+    """Write the normalised crops of one scan to ``<output_folder>/<valve>/images/<id>.b2nd``.
+
+    Args:
+        metadata: Content of the scan's ``<id>_valves.json``.
+        valve_names: Valves to export.
+        output_folder: Folder holding the per-valve dataset folders.
+        crop_voxels: Side length of the crop cube in voxels.
+        resolution_mm: Voxel size of the crop in mm.
+        overwrite: Rewrite crops that already exist.
+        ct: The CT already read as float32; ``None`` reads ``metadata["image"]``.
+    """
     targets = {
         name: os.path.join(output_folder, name, "images", f"{metadata['patient_id']}.b2nd") for name in valve_names
     }
     targets = {name: path for name, path in targets.items() if overwrite or not os.path.isfile(path)}
     if not targets:
         return
-    ct = sitk.Cast(sitk.ReadImage(metadata["image"]), sitk.sitkFloat32)
+    if ct is None:
+        ct = sitk.Cast(sitk.ReadImage(metadata["image"]), sitk.sitkFloat32)
     myocardium, contrast = intensity_reference(scan_hu_window(metadata))
     for name, path in targets.items():
         crop = (sample_crop(ct, metadata["valves"][name], crop_voxels, resolution_mm) - myocardium) / contrast
         save_b2nd(crop[None].astype(np.float32), path)
+
+
+def single_threaded_worker() -> None:
+    """Initialise a worker process: one SimpleITK thread, so parallel workers do not compete for the cores."""
+    sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(1)
+
+
+def prepare_inference_scan(
+    scan_id: str,
+    image_path: str,
+    segmentation_folder: str,
+    segmentation_pattern: str,
+    planes_folder: str,
+    crops_folder: str,
+    valve_names: list[str],
+) -> str | None:
+    """Locate both valve planes of one scan (unless already done) and export the crops of the given valves.
+
+    The CT is read once for both steps. Runs in a worker process of ``valve.py classify``.
+
+    Args:
+        scan_id: Scan id.
+        image_path: CT file.
+        segmentation_folder: Folder with the TotalSegmentator ``heartchambers_highres`` segmentations.
+        segmentation_pattern: Segmentation file name pattern; ``{id}`` marks the scan id, ``*`` matches anything.
+        planes_folder: Folder for the ``<id>_valves.json`` file and PNGs of ``valve_planes.py``.
+        crops_folder: Folder the ``<valve>/images/<id>.b2nd`` crops are written to.
+        valve_names: Valves to export.
+
+    Returns:
+        ``None`` on success, else the error message.
+    """
+    from valve_planes import process_scan, resolve_segmentation
+
+    try:
+        ct = None
+        metadata_path = os.path.join(planes_folder, f"{scan_id}_valves.json")
+        if not os.path.isfile(metadata_path):
+            segmentation_path = resolve_segmentation(segmentation_folder, segmentation_pattern, scan_id)
+            if not os.path.isfile(segmentation_path):
+                return f"no segmentation at {segmentation_path}"
+            ct = sitk.Cast(sitk.ReadImage(image_path), sitk.sitkFloat32)
+            process_scan(scan_id, image_path, segmentation_path, planes_folder, ct=ct)
+        with open(metadata_path) as file:
+            metadata = json.load(file)
+        if scan_hu_window(metadata) is None:
+            return "no per-scan HU window in the valve planes file"
+        export_scan(metadata, valve_names, crops_folder, CROP_VOXELS, CROP_RESOLUTION_MM, overwrite=False, ct=ct)
+        return None
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
 
 
 def main(

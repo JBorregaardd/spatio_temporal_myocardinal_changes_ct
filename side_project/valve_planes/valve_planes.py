@@ -390,11 +390,20 @@ def process_scan(
     segmentation_path: str,
     output_folder: str,
     totalsegmentator: str = "TotalSegmentator",
+    ct: sitk.Image | None = None,
 ) -> list[ValvePlane]:
     """Segment (if needed), locate both valves and save their images and metadata for one scan.
 
     Writes, for each valve, ``<id>_<valve>.png`` (the three views as RGB channels) and ``<id>_<valve>_<view>.png``
     (each view in grayscale), plus ``<id>_valves.json`` to ``output_folder``.
+
+    Args:
+        patient_id: Scan id.
+        image_path: CT file.
+        segmentation_path: Segmentation file, written by TotalSegmentator if missing.
+        output_folder: Folder the PNGs and JSON file are written to.
+        totalsegmentator: TotalSegmentator executable.
+        ct: The CT already read as float32, to avoid reading it again; ``None`` reads ``image_path``.
 
     Returns:
         The located valve planes.
@@ -403,7 +412,8 @@ def process_scan(
         logger.info(f"{patient_id}: running TotalSegmentator")
         run_totalsegmentator(image_path, segmentation_path, totalsegmentator)
 
-    ct = sitk.Cast(sitk.ReadImage(image_path), sitk.sitkFloat32)
+    if ct is None:
+        ct = sitk.Cast(sitk.ReadImage(image_path), sitk.sitkFloat32)
     segmentation = sitk.ReadImage(segmentation_path)
     if segmentation.GetSize() != ct.GetSize():
         segmentation = sitk.Resample(segmentation, ct, sitk.Transform(), sitk.sitkNearestNeighbor, 0)
