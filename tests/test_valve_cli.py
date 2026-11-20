@@ -449,3 +449,28 @@ def test_infer_command_always_passes_the_batch_size(tmp_path: Path) -> None:
     assert command[-2:] == ["--data.data_root_dir", str(tmp_path / "crops")]
     with_workers = valve.infer_command(paths, tmp_path / "run", tmp_path / "p.pt", tmp_path / "crops", 4, 2)
     assert with_workers[with_workers.index("--dataloading.num_workers") + 1] == "2"
+
+
+def test_progress_line_round_trip_and_other_output_ignored() -> None:
+    from infer_glovita import parse_progress_line, progress_line
+
+    assert parse_progress_line(progress_line(1, 5, 20) + "\n") == (1, 5, 20)
+    assert parse_progress_line("  Loading /run/0/checkpoints/best.pt\n") is None
+    assert parse_progress_line("@progress a b c") is None
+
+
+def test_progress_loader_reports_each_pass_and_passes_attributes_on(capsys: pytest.CaptureFixture[str]) -> None:
+    from infer_glovita import ProgressLoader
+
+    class Loader(list):
+        dataset = "the dataset"
+
+    loader = ProgressLoader(Loader(["b1", "b2"]))
+    assert loader.dataset == "the dataset"
+    assert list(loader) == ["b1", "b2"]
+    assert list(loader) == ["b1", "b2"]
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "@progress 0 0 2", "@progress 0 1 2", "@progress 0 2 2",
+        "@progress 1 0 2", "@progress 1 1 2", "@progress 1 2 2",
+    ]  # fmt: skip

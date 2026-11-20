@@ -322,6 +322,9 @@ uv run side_project/valve_planes/valve.py classify \
   runs out of GPU memory (`CUDA out of memory` in the log), lower `--batch-size` or pass `--sequential-inference`; if
   it runs out of RAM, lower `--loader-workers`. The GloViTa output goes to `<valve>_inference.log`; the accuracy and
   F1 it prints use placeholder labels and mean nothing. No labels are needed.
+- The terminal shows a progress bar per valve with the fold model being applied (every fold goes through all scans),
+  the percentage done and the time left. GloViTa's inference prints nothing while it predicts, so `classify` runs it
+  through `infer_glovita.py`, which wraps the data loader to print a line after every batch.
 - Why the batch size matters: GloViTa's inference runs in fp32, and the attention of the ViT over the 1728 patches of
   a crop takes about 5.7 GB per layer for a batch of 32 scans, so one inference at GloViTa's default batch size can
   fill most of a 32 GB GPU. Training uses batches of 2 in bf16 and never gets near that. The batch size does not

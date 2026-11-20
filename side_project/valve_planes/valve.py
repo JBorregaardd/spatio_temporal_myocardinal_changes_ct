@@ -33,6 +33,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -594,6 +595,7 @@ def infer_command(
     dataset_dir: Path,
     batch_size: int,
     loader_workers: Optional[int] = None,
+    progress: bool = False,
 ) -> list[str]:
     """Build the ``glovita_infer`` command that applies the ensemble of the fold models of a run to a dataset.
 
@@ -608,12 +610,14 @@ def infer_command(
         dataset_dir: GloViTa dataset folder whose test split is predicted.
         batch_size: Scans per batch (``dataloading.eval_batch_size``).
         loader_workers: Data loader processes (``dataloading.num_workers``); ``None`` keeps GloViTa's default.
+        progress: Run through ``infer_glovita.py``, which prints a progress line after every batch.
 
     Returns:
         The command and its arguments.
     """
+    entry = [str(HERE / "infer_glovita.py")] if progress else ["-c", INFER_ENTRY]
     command = [
-        str(paths.python), "-c", INFER_ENTRY,
+        str(paths.python), *entry,
         "--exp_dir", str(experiment_dir), "--checkpoint", "best", "--metrics", "acc", "f1",
         "--pred_output", str(pred_path), "--dataloading.eval_batch_size", str(batch_size),
     ]  # fmt: skip
@@ -1231,8 +1235,12 @@ def infer_valve(
     valve: str,
     batch_size: int,
     loader_workers: int,
+    report: Optional[Callable[[int, int, int], None]] = None,
 ) -> Optional[Path]:
     """Apply the ensemble of the fold models of a run to an unlabelled crop dataset, logging to a file.
+
+    The inference runs through ``infer_glovita.py``; its progress lines go to ``report`` and all other output to the
+    log.
 
     Args:
         paths: Data and GloViTa locations.
@@ -1242,19 +1250,32 @@ def infer_valve(
         valve: Valve name.
         batch_size: Scans per batch.
         loader_workers: GloViTa data loader processes (``dataloading.num_workers``).
+        report: Called with (fold pass, batches done, batches per pass) after every batch.
 
     Returns:
         The predictions CSV, or ``None`` if a step failed (see the log).
     """
+    from infer_glovita import parse_progress_line
+
     pred_path, csv_path = out_dir / f"{valve}_predictions.pt", out_dir / f"{valve}_predictions_raw.csv"
-    infer = infer_command(paths, experiment.path, pred_path, dataset_dir, batch_size, loader_workers)
+    infer = infer_command(paths, experiment.path, pred_path, dataset_dir, batch_size, loader_workers, progress=True)
     to_csv = [str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)]
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     with open(out_dir / f"{valve}_inference.log", "w") as log:
         for command, cwd in ((infer, paths.glovita_dir), (to_csv, HERE)):
             log.write(f"$ cd {cwd}\n$ {shlex.join(command)}\n\n")
             log.flush()
-            if subprocess.run(command, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT).returncode:
+            process = subprocess.Popen(
+                command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+            )
+            for line in process.stdout:
+                progress = parse_progress_line(line)
+                if progress is None:
+                    log.write(line)
+                    log.flush()
+                elif report is not None:
+                    report(*progress)
+            if process.wait():
                 return None
     return csv_path
 
@@ -1267,7 +1288,9 @@ def run_inference(
     batch_size: int,
     loader_workers: int,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Run ``infer_valve`` for every valve, at the same time when ``parallel``.
+    """Run ``infer_valve`` for every valve, at the same time when ``parallel``, with a progress bar per valve.
+
+    Each fold model goes through all scans, so a bar covers the batches of all folds.
 
     Args:
         paths: Data and GloViTa locations.
@@ -1285,14 +1308,37 @@ def run_inference(
     """
     from concurrent.futures import ThreadPoolExecutor
 
+    from rich.progress import Progress
+
     console.print(
-        f"Predicting {', '.join(models)} {'in parallel' if parallel else 'one after the other'} "
-        f"(logs: {out_dir}/<valve>_inference.log; their metrics use placeholder labels, ignore them)"
+        f"Predicting {', '.join(models)} {'in parallel' if parallel else 'one after the other'}, "
+        f"batches of {batch_size} (logs: {out_dir}/<valve>_inference.log; their metrics use placeholder labels)"
     )
-    with ThreadPoolExecutor(max_workers=len(models) if parallel else 1) as pool:
+    with Progress(console=console) as progress, ThreadPoolExecutor(len(models) if parallel else 1) as pool:
+        tasks = {valve: progress.add_task(f"{valve}: waiting", total=None) for valve in models}
+
+        def reporter(valve: str, n_folds: int) -> Callable[[int, int, int], None]:
+            def report(pass_index: int, batch: int, batches: int) -> None:
+                progress.update(
+                    tasks[valve],
+                    description=f"{valve}: fold {pass_index + 1}/{n_folds}",
+                    total=n_folds * batches,
+                    completed=pass_index * batches + batch,
+                )
+
+            return report
+
         futures = {
             valve: pool.submit(
-                infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve, batch_size, loader_workers
+                infer_valve,
+                paths,
+                model,
+                out_dir / "crops" / valve,
+                out_dir,
+                valve,
+                batch_size,
+                loader_workers,
+                reporter(valve, len(model.trained_folds)),
             )
             for valve, model in models.items()
         }
