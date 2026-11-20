@@ -241,6 +241,7 @@ uv run side_project/valve_planes/valve.py test mitral
 uv run side_project/valve_planes/valve.py errors mitral
 ```
 
+- `test` and `review` predict in batches of `--batch-size 8` scans; lower it if the GPU runs out of memory (see step 7).
 - `test` evaluates the latest mitral run (`--run <part of the run name>` for another run) and prints accuracy, balanced
   accuracy, macro F1, AUROC and the confusion matrix. It saves `test_metrics.json`, `test_predictions.pt` and
   `test_predictions.csv` in the run folder. A run that was already tested shows its stored results instead of
@@ -316,10 +317,15 @@ uv run side_project/valve_planes/valve.py classify \
   for longer scans), and is restarted every 25 scans so its memory cannot build up; lower `--workers` if the machine
   still runs out of memory. Scans that fail (e.g. no segmentation) are listed in `failed.csv`.
 - Then the ensemble of the fold models of the latest run of each valve is applied (`--aortic-model` and
-  `--mitral-model` pick other runs). The two valves are predicted at the same time on the GPU, each with
-  `--loader-workers 4` data loader processes (GloViTa's default is 12); if it runs out of GPU memory, pass
-  `--sequential-inference`, and if it runs out of RAM, lower `--loader-workers`. The GloViTa output goes to
-  `<valve>_inference.log`; the accuracy and F1 it prints use placeholder labels and mean nothing. No labels are needed.
+  `--mitral-model` pick other runs). The two valves are predicted at the same time on the GPU, each in batches of
+  `--batch-size 8` scans with `--loader-workers 4` data loader processes (GloViTa's defaults are 32 and 12). If it
+  runs out of GPU memory (`CUDA out of memory` in the log), lower `--batch-size` or pass `--sequential-inference`; if
+  it runs out of RAM, lower `--loader-workers`. The GloViTa output goes to `<valve>_inference.log`; the accuracy and
+  F1 it prints use placeholder labels and mean nothing. No labels are needed.
+- Why the batch size matters: GloViTa's inference runs in fp32, and the attention of the ViT over the 1728 patches of
+  a crop takes about 5.7 GB per layer for a batch of 32 scans, so one inference at GloViTa's default batch size can
+  fill most of a 32 GB GPU. Training uses batches of 2 in bf16 and never gets near that. The batch size does not
+  change the predictions, apart from rounding.
 - It writes `<VALVE_DATA_DIR>/classify/<run>/<run>.csv` (`--output` for another folder) with one row per scan:
   `scan_id`, `aortic`, `aortic_p_open`, `mitral`, `mitral_p_open` and `image`, where the valve columns are `open`,
   `closed`, or `failed` if no valve plane or crop could be made. The models and counts go to `<run>_summary.json`.

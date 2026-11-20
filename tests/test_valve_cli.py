@@ -439,3 +439,13 @@ def test_print_classification_counts_shows_both_valves_together(capsys: pytest.C
     output = capsys.readouterr().out
     assert "2 (66.7%)" in output
     assert "aortic and mitral together" in output
+
+
+def test_infer_command_always_passes_the_batch_size(tmp_path: Path) -> None:
+    paths = valve.Paths(data_dir=tmp_path, glovita_dir=tmp_path / "glovita", planes_dir=tmp_path)
+    command = valve.infer_command(paths, tmp_path / "run", tmp_path / "p.pt", tmp_path / "crops", 8)
+    assert command[command.index("--dataloading.eval_batch_size") + 1] == "8"
+    assert "--dataloading.num_workers" not in command
+    assert command[-2:] == ["--data.data_root_dir", str(tmp_path / "crops")]
+    with_workers = valve.infer_command(paths, tmp_path / "run", tmp_path / "p.pt", tmp_path / "crops", 4, 2)
+    assert with_workers[with_workers.index("--dataloading.num_workers") + 1] == "2"

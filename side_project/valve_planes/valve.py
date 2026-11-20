@@ -52,6 +52,7 @@ LABEL_NAMES = {0: "closed", 1: "open"}
 SPLITS = ("train", "val", "test")
 SCANS_PER_WORKER = 25
 INFER_ENTRY = "import sys; from glovita.cli.infer import main; sys.exit(main())"
+INFER_BATCH_SIZE = 8
 TORCH_CHECK = (
     "import json, torch; print(json.dumps({'version': torch.__version__, 'cuda': torch.cuda.is_available(), "
     "'device': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}))"
@@ -586,6 +587,41 @@ def require(path: Path, hint: str) -> None:
         raise typer.Exit(1)
 
 
+def infer_command(
+    paths: Paths,
+    experiment_dir: Path,
+    pred_path: Path,
+    dataset_dir: Path,
+    batch_size: int,
+    loader_workers: Optional[int] = None,
+) -> list[str]:
+    """Build the ``glovita_infer`` command that applies the ensemble of the fold models of a run to a dataset.
+
+    GloViTa's inference runs in fp32 with its default batch size of 32 unless told otherwise; a 3D ViT then needs
+    more GPU memory for attention than a 32 GB GPU has, so the batch size is always passed. It does not change the
+    predictions apart from rounding.
+
+    Args:
+        paths: Data and GloViTa locations.
+        experiment_dir: Run folder holding the fold folders.
+        pred_path: ``.pt`` file the predictions are written to.
+        dataset_dir: GloViTa dataset folder whose test split is predicted.
+        batch_size: Scans per batch (``dataloading.eval_batch_size``).
+        loader_workers: Data loader processes (``dataloading.num_workers``); ``None`` keeps GloViTa's default.
+
+    Returns:
+        The command and its arguments.
+    """
+    command = [
+        str(paths.python), "-c", INFER_ENTRY,
+        "--exp_dir", str(experiment_dir), "--checkpoint", "best", "--metrics", "acc", "f1",
+        "--pred_output", str(pred_path), "--dataloading.eval_batch_size", str(batch_size),
+    ]  # fmt: skip
+    if loader_workers is not None:
+        command += ["--dataloading.num_workers", str(loader_workers)]
+    return command + ["data:generic3d_dataset_config", "--data.data_root_dir", str(dataset_dir)]
+
+
 def launch(command: list[str], cwd: Path, log_path: Optional[Path]) -> int:
     """Run a command in the foreground, or start it in the background with its output in ``log_path``.
 
@@ -771,6 +807,7 @@ def test(
     valve: Valve = typer.Argument(..., help="Valve of the run."),
     run: Optional[str] = typer.Option(None, help="Run folder name or a unique part of it; default: the latest run."),
     force: bool = typer.Option(False, help="Evaluate again even if the run was already tested."),
+    batch_size: int = typer.Option(INFER_BATCH_SIZE, min=1, help="Scans per batch; lower it if the GPU runs out."),
 ) -> None:
     """Evaluate a run on the test split, once the settings are final.
 
@@ -794,12 +831,7 @@ def test(
         return
     pred_path = selected.output("test_predictions.pt")
     csv_path = selected.output("test_predictions.csv")
-    infer = [
-        str(paths.python), "-c", INFER_ENTRY,
-        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
-        "--pred_output", str(pred_path),
-        "data:generic3d_dataset_config", "--data.data_root_dir", str(paths.crops(valve.value)),
-    ]  # fmt: skip
+    infer = infer_command(paths, selected.path, pred_path, paths.crops(valve.value), batch_size)
     if launch(infer, paths.glovita_dir, None):
         raise typer.Exit(1)
     if launch([str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)], HERE, None):
@@ -1029,6 +1061,7 @@ def find_disagreements(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def review(
     valve: Valve = typer.Argument(..., help="Valve of the run."),
     run: Optional[str] = typer.Option(None, help="Run folder name or a unique part of it; default: the latest run."),
+    batch_size: int = typer.Option(INFER_BATCH_SIZE, min=1, help="Scans per batch; lower it if the GPU runs out."),
 ) -> None:
     """List every labelled scan where the run disagrees with labels.csv, to check the labels.
 
@@ -1054,12 +1087,7 @@ def review(
     out_dir = selected.path / "review"
     out_dir.mkdir(exist_ok=True)
     pred_path, csv_path = out_dir / "all_predictions.pt", out_dir / "all_predictions.csv"
-    infer = [
-        str(paths.python), "-c", INFER_ENTRY,
-        "--exp_dir", str(selected.path), "--checkpoint", "best", "--metrics", "acc", "f1",
-        "--pred_output", str(pred_path),
-        "data:generic3d_dataset_config", "--data.data_root_dir", str(review_dir),
-    ]  # fmt: skip
+    infer = infer_command(paths, selected.path, pred_path, review_dir, batch_size)
     if launch(infer, paths.glovita_dir, None):
         raise typer.Exit(1)
     if launch([str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)], HERE, None):
@@ -1196,7 +1224,13 @@ def export_inference_crops(
 
 
 def infer_valve(
-    paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir: Path, valve: str, loader_workers: int
+    paths: Paths,
+    experiment: Experiment,
+    dataset_dir: Path,
+    out_dir: Path,
+    valve: str,
+    batch_size: int,
+    loader_workers: int,
 ) -> Optional[Path]:
     """Apply the ensemble of the fold models of a run to an unlabelled crop dataset, logging to a file.
 
@@ -1206,18 +1240,14 @@ def infer_valve(
         dataset_dir: GloViTa dataset folder of the crops.
         out_dir: Folder for ``<valve>_predictions.pt``, ``<valve>_predictions_raw.csv`` and ``<valve>_inference.log``.
         valve: Valve name.
+        batch_size: Scans per batch.
         loader_workers: GloViTa data loader processes (``dataloading.num_workers``).
 
     Returns:
         The predictions CSV, or ``None`` if a step failed (see the log).
     """
     pred_path, csv_path = out_dir / f"{valve}_predictions.pt", out_dir / f"{valve}_predictions_raw.csv"
-    infer = [
-        str(paths.python), "-c", INFER_ENTRY,
-        "--exp_dir", str(experiment.path), "--checkpoint", "best", "--metrics", "acc", "f1",
-        "--pred_output", str(pred_path), "--dataloading.num_workers", str(loader_workers),
-        "data:generic3d_dataset_config", "--data.data_root_dir", str(dataset_dir),
-    ]  # fmt: skip
+    infer = infer_command(paths, experiment.path, pred_path, dataset_dir, batch_size, loader_workers)
     to_csv = [str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)]
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     with open(out_dir / f"{valve}_inference.log", "w") as log:
@@ -1230,7 +1260,12 @@ def infer_valve(
 
 
 def run_inference(
-    paths: Paths, models: dict[str, Experiment], out_dir: Path, parallel: bool, loader_workers: int
+    paths: Paths,
+    models: dict[str, Experiment],
+    out_dir: Path,
+    parallel: bool,
+    batch_size: int,
+    loader_workers: int,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run ``infer_valve`` for every valve, at the same time when ``parallel``.
 
@@ -1239,6 +1274,7 @@ def run_inference(
         models: Valve name to trained run.
         out_dir: Output folder holding ``crops/<valve>/``.
         parallel: Run the valves at the same time (on the same GPU) instead of one after the other.
+        batch_size: Scans per batch.
         loader_workers: GloViTa data loader processes per valve.
 
     Returns:
@@ -1255,7 +1291,9 @@ def run_inference(
     )
     with ThreadPoolExecutor(max_workers=len(models) if parallel else 1) as pool:
         futures = {
-            valve: pool.submit(infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve, loader_workers)
+            valve: pool.submit(
+                infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve, batch_size, loader_workers
+            )
             for valve, model in models.items()
         }
         results = {valve: future.result() for valve, future in futures.items()}
@@ -1348,6 +1386,9 @@ def classify(
     parallel_inference: bool = typer.Option(
         True, "--parallel-inference/--sequential-inference", help="Run the GloViTa inference of the valves at once."
     ),
+    batch_size: int = typer.Option(
+        INFER_BATCH_SIZE, min=1, help="Scans per inference batch; lower it if the GPU runs out of memory."
+    ),
     loader_workers: int = typer.Option(4, min=0, help="GloViTa data loader processes per valve during inference."),
 ) -> None:
     """Classify the aortic and mitral valve as open or closed in every scan of a dataset with trained runs.
@@ -1396,7 +1437,7 @@ def classify(
     if empty:
         console.print(f"[red]No {' or '.join(empty)} crops could be made; see {out_dir / 'failed.csv'}.[/red]")
         raise typer.Exit(1)
-    predictions = run_inference(paths, models, out_dir, parallel_inference, loader_workers)
+    predictions = run_inference(paths, models, out_dir, parallel_inference, batch_size, loader_workers)
 
     rows = classification_rows(scans, predictions)
     csv_path = out_dir / f"{run_name}.csv"
