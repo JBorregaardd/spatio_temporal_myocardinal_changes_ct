@@ -64,7 +64,10 @@ def test_build_dataset_places_each_phase_in_its_own_folder(tmp_path: Path) -> No
     rows = build_dataset(selection, str(tmp_path / "out"), copy=True)
 
     assert [(row["patient_id"], row["phase"]) for row in rows] == [
-        ("0000", "ED"), ("0002", "ED"), ("0002", "ES"), ("0007", "ES")
+        ("0000", "ED"),
+        ("0002", "ED"),
+        ("0002", "ES"),
+        ("0007", "ES"),
     ]
     assert (tmp_path / "out" / "ED" / "0002.nii.gz").read_text() == "0002-1"
     assert (tmp_path / "out" / "ES" / "0007.nii.gz").read_text() == "0007-0"

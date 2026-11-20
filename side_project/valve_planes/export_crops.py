@@ -90,7 +90,9 @@ def sample_crop(
     points = np.asarray(plane["center_mm"]) + np.stack([a, b, c], axis=-1).reshape(-1, 3) @ basis
     index_zyx = physical_to_index(ct, points)[:, ::-1].T
     volume = sitk.GetArrayViewFromImage(ct)
-    return map_coordinates(volume, index_zyx, order=1, cval=AIR_HU).reshape(crop_voxels, crop_voxels, crop_voxels)
+    return map_coordinates(volume, index_zyx, order=1, cval=AIR_HU, output=np.float32).reshape(
+        crop_voxels, crop_voxels, crop_voxels
+    )
 
 
 def read_labels(path: str) -> dict[str, dict[str, int]]:
@@ -251,7 +253,7 @@ def export_scan(
         crop_voxels: Side length of the crop cube in voxels.
         resolution_mm: Voxel size of the crop in mm.
         overwrite: Rewrite crops that already exist.
-        ct: The CT already read as float32; ``None`` reads ``metadata["image"]``.
+        ct: The CT already read; ``None`` reads ``metadata["image"]``.
     """
     targets = {
         name: os.path.join(output_folder, name, "images", f"{metadata['patient_id']}.b2nd") for name in valve_names
@@ -260,7 +262,7 @@ def export_scan(
     if not targets:
         return
     if ct is None:
-        ct = sitk.Cast(sitk.ReadImage(metadata["image"]), sitk.sitkFloat32)
+        ct = sitk.ReadImage(metadata["image"])
     myocardium, contrast = intensity_reference(scan_hu_window(metadata))
     for name, path in targets.items():
         crop = (sample_crop(ct, metadata["valves"][name], crop_voxels, resolution_mm) - myocardium) / contrast
@@ -306,7 +308,7 @@ def prepare_inference_scan(
             segmentation_path = resolve_segmentation(segmentation_folder, segmentation_pattern, scan_id)
             if not os.path.isfile(segmentation_path):
                 return f"no segmentation at {segmentation_path}"
-            ct = sitk.Cast(sitk.ReadImage(image_path), sitk.sitkFloat32)
+            ct = sitk.ReadImage(image_path)
             process_scan(scan_id, image_path, segmentation_path, planes_folder, ct=ct)
         with open(metadata_path) as file:
             metadata = json.load(file)

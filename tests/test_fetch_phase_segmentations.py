@@ -23,7 +23,11 @@ def test_fetch_segmentations_copies_found_and_lists_missing(tmp_path: Path) -> N
     found.write_text("ed-0000")
     rows = [
         {"patient_id": "0000", "phase": "ED", "source_path": f"/nifti/{scan}.nii.gz"},
-        {"patient_id": "0007", "phase": "ES", "source_path": "/nifti/CGPS-10y-august-2026_0007_SERIES0013_volume_0.nii.gz"},
+        {
+            "patient_id": "0007",
+            "phase": "ES",
+            "source_path": "/nifti/CGPS-10y-august-2026_0007_SERIES0013_volume_0.nii.gz",
+        },
     ]
 
     missing = fetch_segmentations(rows, str(root), str(tmp_path / "out"), copy=True)

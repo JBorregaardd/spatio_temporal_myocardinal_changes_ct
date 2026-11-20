@@ -43,7 +43,10 @@ def test_link_blinded_links_images_and_existing_segmentations(tmp_path: Path) ->
         (dataset / phase / f"{pid}.nii.gz").write_text(f"{phase}-image")
     (dataset / "segmentations" / "ED").mkdir(parents=True)
     (dataset / "segmentations" / "ED" / "0000.heart.nii.gz").write_text("ED-seg")
-    key = [{"scan_id": "S001", "patient_id": "0000", "phase": "ES"}, {"scan_id": "S002", "patient_id": "0000", "phase": "ED"}]
+    key = [
+        {"scan_id": "S001", "patient_id": "0000", "phase": "ES"},
+        {"scan_id": "S002", "patient_id": "0000", "phase": "ED"},
+    ]
 
     try:
         missing = link_blinded(key, str(dataset), str(tmp_path / "blinded"))

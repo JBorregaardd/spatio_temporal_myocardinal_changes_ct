@@ -28,8 +28,12 @@ def links_file(**overrides: list) -> pd.DataFrame:
             "CGPS-10y-august-2026_0730_SERIES0004_volume_1",
         ],
         "Baseline SeriesDescription": ["FULL 75% 1.00s CE", None, "FULL 70% 1.00s CE", "FULL 75% 1.00s CE"],
-        "Follow-up SeriesDescription": ["HALF 648ms 0.90s PIQE 0.5 CE", "HALF 700ms 1.00s CE", None,
-                                        "HALF 648ms 0.90s PIQE 0.5 CE"],
+        "Follow-up SeriesDescription": [
+            "HALF 648ms 0.90s PIQE 0.5 CE",
+            "HALF 700ms 1.00s CE",
+            None,
+            "HALF 648ms 0.90s PIQE 0.5 CE",
+        ],
         " Link_found (yes/no) ": ["yes", "Yes", "no", "yes"],
         "Baseline scan type": ["ED", " ed ", None, "ED"],
     }
@@ -38,7 +42,9 @@ def links_file(**overrides: list) -> pd.DataFrame:
 
 
 def test_extract_ids_keeps_leading_zeros() -> None:
-    values = pd.Series(["CGPS-10y-august-2026_0730_SERIES0004_volume_1", "/data/CGPS-10y-august-2026_0001.nii.gz", None])
+    values = pd.Series(
+        ["CGPS-10y-august-2026_0730_SERIES0004_volume_1", "/data/CGPS-10y-august-2026_0001.nii.gz", None]
+    )
     ids = extract_ids(values, "CGPS-10y-august-2026")
     assert ids.tolist()[:2] == ["0730", "0001"]
     assert pd.isna(ids[2])

@@ -311,13 +311,15 @@ uv run side_project/valve_planes/valve.py classify \
   `SEGMENTATION_FOLDER`, `IMAGE_PATTERN` and `SEGMENTATION_PATTERN` in `.env` are used. If there is no images or
   segmentations folder in either place, the command stops and says so.
 - Per scan, one worker process reads the CT once, locates both valve planes (`valve_planes.py`) and writes the crop of
-  each valve. `--workers 8` by default (at most the number of CPU cores); each worker holds a CT and its distance
-  transforms in memory, roughly 2-4 GB, so lower `--workers` if the machine runs out of memory. Scans that fail (e.g.
-  no segmentation) are listed in `failed.csv`.
+  each valve. `--workers 8` by default (at most the number of CPU cores). A worker holds one CT and the distance
+  transforms of the region where the two structures of a valve meet, about 0.65 GB for a 512 x 512 x 275 scan (more
+  for longer scans), and is restarted every 25 scans so its memory cannot build up; lower `--workers` if the machine
+  still runs out of memory. Scans that fail (e.g. no segmentation) are listed in `failed.csv`.
 - Then the ensemble of the fold models of the latest run of each valve is applied (`--aortic-model` and
-  `--mitral-model` pick other runs). The two valves are predicted at the same time on the GPU; if it runs out of GPU
-  memory, pass `--sequential-inference`. The GloViTa output goes to `<valve>_inference.log`; the accuracy and F1 it
-  prints use placeholder labels and mean nothing. No labels are needed.
+  `--mitral-model` pick other runs). The two valves are predicted at the same time on the GPU, each with
+  `--loader-workers 4` data loader processes (GloViTa's default is 12); if it runs out of GPU memory, pass
+  `--sequential-inference`, and if it runs out of RAM, lower `--loader-workers`. The GloViTa output goes to
+  `<valve>_inference.log`; the accuracy and F1 it prints use placeholder labels and mean nothing. No labels are needed.
 - It writes `<VALVE_DATA_DIR>/classify/<run>/<run>.csv` (`--output` for another folder) with one row per scan:
   `scan_id`, `aortic`, `aortic_p_open`, `mitral`, `mitral_p_open` and `image`, where the valve columns are `open`,
   `closed`, or `failed` if no valve plane or crop could be made. The models and counts go to `<run>_summary.json`.

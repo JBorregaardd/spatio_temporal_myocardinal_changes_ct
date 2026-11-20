@@ -50,6 +50,7 @@ REPO_ROOT = HERE.parents[1]
 CONFIG_PATH = HERE / "valve_config.yaml"
 LABEL_NAMES = {0: "closed", 1: "open"}
 SPLITS = ("train", "val", "test")
+SCANS_PER_WORKER = 25
 INFER_ENTRY = "import sys; from glovita.cli.infer import main; sys.exit(main())"
 TORCH_CHECK = (
     "import json, torch; print(json.dumps({'version': torch.__version__, 'cuda': torch.cuda.is_available(), "
@@ -1177,7 +1178,9 @@ def export_inference_crops(
             for scan, args in arguments.items():
                 finish(scan, prepare_inference_scan(*args))
         else:
-            with ProcessPoolExecutor(max_workers=workers, initializer=single_threaded_worker) as pool:
+            with ProcessPoolExecutor(
+                max_workers=workers, initializer=single_threaded_worker, max_tasks_per_child=SCANS_PER_WORKER
+            ) as pool:
                 futures = {pool.submit(prepare_inference_scan, *args): scan for scan, args in arguments.items()}
                 for future in as_completed(futures):
                     finish(futures[future], future.result())
@@ -1192,7 +1195,9 @@ def export_inference_crops(
     return exported
 
 
-def infer_valve(paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir: Path, valve: str) -> Optional[Path]:
+def infer_valve(
+    paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir: Path, valve: str, loader_workers: int
+) -> Optional[Path]:
     """Apply the ensemble of the fold models of a run to an unlabelled crop dataset, logging to a file.
 
     Args:
@@ -1201,6 +1206,7 @@ def infer_valve(paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir
         dataset_dir: GloViTa dataset folder of the crops.
         out_dir: Folder for ``<valve>_predictions.pt``, ``<valve>_predictions_raw.csv`` and ``<valve>_inference.log``.
         valve: Valve name.
+        loader_workers: GloViTa data loader processes (``dataloading.num_workers``).
 
     Returns:
         The predictions CSV, or ``None`` if a step failed (see the log).
@@ -1209,7 +1215,7 @@ def infer_valve(paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir
     infer = [
         str(paths.python), "-c", INFER_ENTRY,
         "--exp_dir", str(experiment.path), "--checkpoint", "best", "--metrics", "acc", "f1",
-        "--pred_output", str(pred_path),
+        "--pred_output", str(pred_path), "--dataloading.num_workers", str(loader_workers),
         "data:generic3d_dataset_config", "--data.data_root_dir", str(dataset_dir),
     ]  # fmt: skip
     to_csv = [str(paths.python), str(HERE / "predictions_to_csv.py"), str(pred_path), str(csv_path)]
@@ -1224,7 +1230,7 @@ def infer_valve(paths: Paths, experiment: Experiment, dataset_dir: Path, out_dir
 
 
 def run_inference(
-    paths: Paths, models: dict[str, Experiment], out_dir: Path, parallel: bool
+    paths: Paths, models: dict[str, Experiment], out_dir: Path, parallel: bool, loader_workers: int
 ) -> dict[str, list[dict[str, Any]]]:
     """Run ``infer_valve`` for every valve, at the same time when ``parallel``.
 
@@ -1233,6 +1239,7 @@ def run_inference(
         models: Valve name to trained run.
         out_dir: Output folder holding ``crops/<valve>/``.
         parallel: Run the valves at the same time (on the same GPU) instead of one after the other.
+        loader_workers: GloViTa data loader processes per valve.
 
     Returns:
         Valve name to per-scan predictions from ``read_predictions``.
@@ -1248,7 +1255,7 @@ def run_inference(
     )
     with ThreadPoolExecutor(max_workers=len(models) if parallel else 1) as pool:
         futures = {
-            valve: pool.submit(infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve)
+            valve: pool.submit(infer_valve, paths, model, out_dir / "crops" / valve, out_dir, valve, loader_workers)
             for valve, model in models.items()
         }
         results = {valve: future.result() for valve, future in futures.items()}
@@ -1336,11 +1343,12 @@ def classify(
     output: Optional[str] = typer.Option(None, help="Output folder; default <VALVE_DATA_DIR>/classify/<run>."),
     limit: int = typer.Option(0, help="Only classify the first N scans (0 classifies all)."),
     workers: int = typer.Option(
-        min(8, os.cpu_count() or 1), min=1, help="Parallel processes for the valve planes and crops (~2-4 GB RAM each)."
+        min(8, os.cpu_count() or 1), min=1, help="Parallel processes for the valve planes and crops (~1 GB RAM each)."
     ),
     parallel_inference: bool = typer.Option(
         True, "--parallel-inference/--sequential-inference", help="Run the GloViTa inference of the valves at once."
     ),
+    loader_workers: int = typer.Option(4, min=0, help="GloViTa data loader processes per valve during inference."),
 ) -> None:
     """Classify the aortic and mitral valve as open or closed in every scan of a dataset with trained runs.
 
@@ -1388,7 +1396,7 @@ def classify(
     if empty:
         console.print(f"[red]No {' or '.join(empty)} crops could be made; see {out_dir / 'failed.csv'}.[/red]")
         raise typer.Exit(1)
-    predictions = run_inference(paths, models, out_dir, parallel_inference)
+    predictions = run_inference(paths, models, out_dir, parallel_inference, loader_workers)
 
     rows = classification_rows(scans, predictions)
     csv_path = out_dir / f"{run_name}.csv"

@@ -108,6 +108,26 @@ def _bounding_box(mask: np.ndarray, margin: int) -> tuple[slice, ...]:
     return tuple(slice(a, b) for a, b in zip(lo, hi))
 
 
+def _contact_box(first: np.ndarray, second: np.ndarray, margin: int) -> tuple[slice, ...] | None:
+    """Slices of the region holding every voxel within ``margin`` voxels of both masks, grown by ``margin`` again.
+
+    A voxel within ``margin`` of both masks lies in the overlap of their bounding boxes grown by ``margin``. Growing
+    that overlap once more keeps the nearest mask voxels of those voxels inside, so distance transforms computed in
+    the region are exact there, while the region is much smaller than the box around both masks.
+
+    Returns:
+        The slices, or ``None`` if the grown bounding boxes do not overlap.
+    """
+    boxes = _bounding_box(first, margin), _bounding_box(second, margin)
+    lo = [max(a.start, b.start) for a, b in zip(*boxes)]
+    hi = [min(a.stop, b.stop) for a, b in zip(*boxes)]
+    if any(start >= stop for start, stop in zip(lo, hi)):
+        return None
+    return tuple(
+        slice(max(start - margin, 0), min(stop + margin, size)) for start, stop, size in zip(lo, hi, first.shape)
+    )
+
+
 def contact_surface(
     labels: np.ndarray,
     spacing_zyx: np.ndarray,
@@ -140,17 +160,23 @@ def contact_surface(
             raise ValueError(f"Label {label} needed for the {valve.name} valve is missing")
 
     margin = int(np.ceil(max(thresholds_mm) / spacing_zyx.min())) + 1
-    box = _bounding_box(upstream | downstream, margin)
+    box = _contact_box(upstream, downstream, margin)
+    too_far = ValueError(
+        f"Fewer than {min_voxels} contact voxels for the {valve.name} valve within {thresholds_mm[-1]} mm"
+    )
+    if box is None or not upstream[box].any() or not downstream[box].any():
+        raise too_far
     offset = np.array([s.start for s in box])
-    dist_up = distance_transform_edt(~upstream[box], sampling=spacing_zyx)
-    dist_down = distance_transform_edt(~downstream[box], sampling=spacing_zyx)
+    upstream, downstream = upstream[box], downstream[box]
+    dist_up = distance_transform_edt(~upstream, sampling=spacing_zyx)
+    dist_down = distance_transform_edt(~downstream, sampling=spacing_zyx)
 
     for threshold in thresholds_mm:
         contact = (dist_up <= threshold) & (dist_down <= threshold)
         if contact.sum() >= min_voxels:
             coords = np.argwhere(contact)
             return coords + offset, dist_up[contact] + dist_down[contact], threshold
-    raise ValueError(f"Fewer than {min_voxels} contact voxels for the {valve.name} valve within {thresholds_mm[-1]} mm")
+    raise too_far
 
 
 def _in_plane_axes(normal: np.ndarray, towards: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -225,11 +251,22 @@ def locate_valve(image: sitk.Image, labels: np.ndarray, valve: Valve) -> ValvePl
 
 
 def _local_centroid(image: sitk.Image, labels: np.ndarray, label: int, center: np.ndarray) -> np.ndarray:
-    """Centroid of the voxels of ``label`` within ``LOCAL_RADIUS_MM`` of ``center`` (all voxels if none are)."""
-    coords = np.argwhere(labels == label)[:, ::-1].astype(float)
+    """Centroid of the voxels of ``label`` within ``LOCAL_RADIUS_MM`` of ``center`` (all voxels if none are).
+
+    Only a box around ``center`` holding the sphere of ``LOCAL_RADIUS_MM`` is searched (the direction matrix is
+    orthonormal, so the sphere spans ``LOCAL_RADIUS_MM / spacing`` voxels along each index axis).
+    """
+    center_zyx = physical_to_index(image, center[None])[0][::-1]
+    half_width = np.ceil(LOCAL_RADIUS_MM / np.asarray(image.GetSpacing())[::-1]) + 1
+    lo = np.clip(np.floor(center_zyx - half_width), 0, labels.shape).astype(int)
+    hi = np.clip(np.ceil(center_zyx + half_width) + 1, 0, labels.shape).astype(int)
+    box = tuple(slice(a, b) for a, b in zip(lo, hi))
+    coords = (np.argwhere(labels[box] == label) + lo)[:, ::-1].astype(float)
     points = index_to_physical(image, coords)
     near = np.linalg.norm(points - center, axis=1) <= LOCAL_RADIUS_MM
-    return points[near].mean(axis=0) if near.any() else points.mean(axis=0)
+    if near.any():
+        return points[near].mean(axis=0)
+    return index_to_physical(image, np.argwhere(labels == label)[:, ::-1].astype(float)).mean(axis=0)
 
 
 def sample_plane(
@@ -268,7 +305,9 @@ def sample_plane(
     points = (in_plane[None] + depth[:, None, None, None] * across).reshape(-1, 3)
     index_zyx = physical_to_index(ct, points)[:, ::-1].T
     volume = sitk.GetArrayViewFromImage(ct)
-    samples = map_coordinates(volume, index_zyx, order=1, cval=AIR_HU).reshape(n_slices, n_pixels, n_pixels)
+    samples = map_coordinates(volume, index_zyx, order=1, cval=AIR_HU, output=np.float32).reshape(
+        n_slices, n_pixels, n_pixels
+    )
     return samples.mean(axis=0)
 
 
@@ -403,7 +442,7 @@ def process_scan(
         segmentation_path: Segmentation file, written by TotalSegmentator if missing.
         output_folder: Folder the PNGs and JSON file are written to.
         totalsegmentator: TotalSegmentator executable.
-        ct: The CT already read as float32, to avoid reading it again; ``None`` reads ``image_path``.
+        ct: The CT already read, to avoid reading it again; ``None`` reads ``image_path``.
 
     Returns:
         The located valve planes.
@@ -413,11 +452,11 @@ def process_scan(
         run_totalsegmentator(image_path, segmentation_path, totalsegmentator)
 
     if ct is None:
-        ct = sitk.Cast(sitk.ReadImage(image_path), sitk.sitkFloat32)
+        ct = sitk.ReadImage(image_path)
     segmentation = sitk.ReadImage(segmentation_path)
     if segmentation.GetSize() != ct.GetSize():
         segmentation = sitk.Resample(segmentation, ct, sitk.Transform(), sitk.sitkNearestNeighbor, 0)
-    labels = sitk.GetArrayFromImage(segmentation)
+    labels = sitk.GetArrayViewFromImage(segmentation)
     hu_min, hu_max = adaptive_window(sitk.GetArrayViewFromImage(ct), labels)
 
     os.makedirs(output_folder, exist_ok=True)
