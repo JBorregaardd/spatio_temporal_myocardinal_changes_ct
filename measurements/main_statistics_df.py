@@ -4,7 +4,8 @@
 # <run folder>/statistics. Thickness and segment volumes come from the run folder, and the LV myocardial volume and mass, the LV blood pool
 # volume and the sphericity index from the TotalSegmentator heart segmentation. Height, weight and BSA come from the metadata file via BSA.py.
 # For CGPS10, set ES_SEGMENTATION_FOLDER to get the end-systolic LV volume and the ejection fraction; patients without an ES segmentation
-# (and CGPS1, which has no ES scans) get NaN.
+# (and CGPS1, which has no ES scans) get NaN. The "ED" scans are mid-diastolic (~75% R-R), so ejection_fraction_mid_diastolic is the raw
+# LVEF(75_35) and ejection_fraction is converted to end-diastole with LVEF = 0.782 * LVEF(75_35) + 20.76.
 # e.g. uv run measurements/main_statistics_df.py --dataset CGPS10 --aorta-exclusion-mm 0
 #################################################################################################################################################
 
@@ -27,7 +28,13 @@ from BSA import body_surface_area, gender_and_age, load_metadata_file, load_tran
 from pipeline import AORTA_EXCLUSION_MM, DataSource, load_environment, run_output_dir  # noqa: E402
 from sphericity_index import sphericity_index  # noqa: E402
 from thickness import SEGMENTS, madwt, septal_lateral_ratio, thickness_per_segment  # noqa: E402
-from volume import blood_pool_volume, ejection_fraction, myocardium_volume, segment_volume  # noqa: E402
+from volume import (  # noqa: E402
+    blood_pool_volume,
+    corrected_ejection_fraction,
+    ejection_fraction,
+    myocardium_volume,
+    segment_volume,
+)
 
 DATASETS_WITHOUT_DEMOGRAPHICS = {"ImageCAS_1-200"}
 FINISHED_MARKER = "done.json"
@@ -65,6 +72,7 @@ PATIENT_FIELDS = [
     "Sphericity_index",
     "LVDVI",
     "lv_esv_ml",
+    "ejection_fraction_mid_diastolic",
     "ejection_fraction",
 ]
 
@@ -171,6 +179,7 @@ def measure_patient(
         myocardium = myocardium_volume(segmentation_path)
         blood_pool = blood_pool_volume(segmentation_path)
         esv = blood_pool_volume(es_path)["lv_blood_pool_volume_ml"] if es_path else np.nan
+        mid_diastolic_ef = ejection_fraction(blood_pool["lv_blood_pool_volume_ml"], esv) if es_path else np.nan
         patient_row = {
             "patient_id": patient_id,
             "lvm_max_thickness_mm": np.nanmax(
@@ -184,7 +193,8 @@ def measure_patient(
             "lv_blood_pool_volume_ml": blood_pool["lv_blood_pool_volume_ml"],
             "Sphericity_index": sphericity["si_vol"],
             "lv_esv_ml": esv,
-            "ejection_fraction": ejection_fraction(blood_pool["lv_blood_pool_volume_ml"], esv) if es_path else np.nan,
+            "ejection_fraction_mid_diastolic": mid_diastolic_ef,
+            "ejection_fraction": corrected_ejection_fraction(mid_diastolic_ef),
         }
         print(f"Patient {patient_id} done")
         return segment_rows, patient_row

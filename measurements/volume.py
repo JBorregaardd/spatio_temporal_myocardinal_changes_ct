@@ -6,6 +6,8 @@ import SimpleITK as sitk
 LVM_ID = 1
 LV_ID = 3
 MYOCARDIAL_DENSITY_G_PER_ML = 1.055
+MID_DIASTOLIC_EF_SLOPE = 0.782
+MID_DIASTOLIC_EF_INTERCEPT = 20.76
 
 
 def myocardium_volume(segmentation_path: str) -> dict[str, float]:
@@ -64,3 +66,20 @@ def ejection_fraction(end_diastolic_volume_ml: float, end_systolic_volume_ml: fl
     if end_diastolic_volume_ml <= 0:
         return float("nan")
     return (end_diastolic_volume_ml - end_systolic_volume_ml) / end_diastolic_volume_ml * 100
+
+
+def corrected_ejection_fraction(mid_diastolic_ejection_fraction: float) -> float:
+    """Convert a mid-diastolic LVEF (75% to 35% of the R-R interval) to the LVEF from end-diastole (95% to 35%).
+
+    The CGPS10 "end-diastolic" scans are acquired at about 75% of the R-R interval, so the EDV, and with it the
+    ejection fraction, is underestimated. The linear conversion, ``LVEF = 0.782 * LVEF(75_35) + 20.76``
+    (adj. R^2 0.87), was derived in 1085 subjects without heart failure.
+
+    Args:
+        mid_diastolic_ejection_fraction: Ejection fraction in percent from the 75% and 35% R-R segmentations
+            (``ejection_fraction``).
+
+    Returns:
+        Estimated ejection fraction from end-diastole in percent; NaN if the input is NaN.
+    """
+    return MID_DIASTOLIC_EF_SLOPE * mid_diastolic_ejection_fraction + MID_DIASTOLIC_EF_INTERCEPT

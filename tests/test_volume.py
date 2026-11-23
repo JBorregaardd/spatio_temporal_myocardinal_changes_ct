@@ -8,7 +8,13 @@ import SimpleITK as sitk
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "measurements"))
 
-from volume import MYOCARDIAL_DENSITY_G_PER_ML, blood_pool_volume, ejection_fraction, myocardium_volume  # noqa: E402
+from volume import (  # noqa: E402
+    MYOCARDIAL_DENSITY_G_PER_ML,
+    blood_pool_volume,
+    corrected_ejection_fraction,
+    ejection_fraction,
+    myocardium_volume,
+)
 
 
 def write_segmentation(tmp_path: Path) -> str:
@@ -40,3 +46,8 @@ def test_myocardium_volume_counts_only_the_myocardium_label(tmp_path: Path) -> N
 def test_ejection_fraction_in_percent() -> None:
     assert ejection_fraction(120.0, 48.0) == pytest.approx(60.0)
     assert np.isnan(ejection_fraction(0.0, 10.0))
+
+
+def test_corrected_ejection_fraction_uses_the_mid_diastolic_conversion() -> None:
+    assert corrected_ejection_fraction(60.0) == pytest.approx(0.782 * 60.0 + 20.76)
+    assert np.isnan(corrected_ejection_fraction(np.nan))
