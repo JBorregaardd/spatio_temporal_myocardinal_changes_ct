@@ -30,6 +30,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import SimpleITK as sitk  # noqa: E402
 import vtk  # noqa: E402
+from matplotlib.cm import ScalarMappable  # noqa: E402
 from matplotlib.colors import Normalize  # noqa: E402
 from scipy.spatial import cKDTree  # noqa: E402
 from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy  # noqa: E402
@@ -62,6 +63,9 @@ BULLSEYE_NEIGHBOURS = 5
 RADII = np.linspace(0.2, 1, 4)
 RINGS = [(0, 6), (6, 12), (12, 16)]
 CMAP = "RdBu_r"
+MISSING_COLOUR = "#bdbdbd"
+IMAGE_ANGLES = 720
+IMAGE_RADII = 375
 FIGURE_FOLDER = os.path.join(OUTPUT_FOLDER, "bullseye")
 
 
@@ -335,6 +339,30 @@ def draw_outline(ax: plt.Axes) -> None:
     ax.plot(np.linspace(0, 2 * np.pi, 100), np.full(100, RADII[0]), "k", linewidth=0.8)
 
 
+def polar_image(points: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Mean change per cell of a regular polar grid, NaN for cells without points and inside the apex ring.
+
+    The cells are a little larger than the spacing of the bullseye points, so every cell inside a covered area holds
+    at least one point and only areas without data stay empty.
+
+    Args:
+        points: Bullseye points with ``theta`` (radians), ``radius`` (normalised to 1) and ``values``.
+
+    Returns:
+        Angle edges, radius edges and the (radius, angle) image of mean values.
+    """
+    theta_edges = np.linspace(-np.pi, np.pi, IMAGE_ANGLES + 1)
+    radius_edges = np.linspace(0, 1, IMAGE_RADII + 1)
+    finite = np.isfinite(points["values"])
+    sample = (points["radius"][finite], np.mod(points["theta"][finite] + np.pi, 2 * np.pi) - np.pi)
+    sums, _, _ = np.histogram2d(*sample, bins=[radius_edges, theta_edges], weights=points["values"][finite])
+    counts, _, _ = np.histogram2d(*sample, bins=[radius_edges, theta_edges])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        image = sums / counts
+    image[(radius_edges[1:] <= RADII[0])] = np.nan
+    return theta_edges, radius_edges, image
+
+
 def bullseye_grid(polar: dict[str, dict[str, np.ndarray]], vmax: float, n_columns: int = 5) -> plt.Figure:
     """Grid of single-subject difference bullseyes on one symmetric colour scale.
 
@@ -356,27 +384,23 @@ def bullseye_grid(polar: dict[str, dict[str, np.ndarray]], vmax: float, n_column
         squeeze=False,
     )
     norm = Normalize(vmin=-vmax, vmax=vmax, clip=True)
-    scatter = None
     for ax, (label, points) in zip(axes.flat, polar.items()):
-        scatter = ax.scatter(
-            points["theta"],
-            points["radius"],
-            c=points["values"],
-            s=0.3,
-            marker=".",
-            cmap=CMAP,
-            norm=norm,
-            linewidths=0,
-            rasterized=True,
-        )
+        theta_edges, radius_edges, image = polar_image(points)
+        ax.bar(0, 1, 2 * np.pi, 0, color=MISSING_COLOUR, edgecolor="none")
+        ax.pcolormesh(theta_edges, radius_edges, image, cmap=CMAP, norm=norm, shading="flat", rasterized=True)
+        ax.bar(0, RADII[0], 2 * np.pi, 0, color="white", edgecolor="none")
         draw_outline(ax)
         ax.set(ylim=[0, 1])
         ax.axis("off")
         ax.set_title(label, fontsize=9)
     for ax in axes.flat[len(polar) :]:
         ax.axis("off")
-    colorbar = fig.colorbar(scatter, ax=axes, orientation="horizontal", shrink=0.4, aspect=40)
-    colorbar.set_label("Change in wall thickness (mm), CGPS10 − CGPS1, per subject (no smoothing)")
+    colorbar = fig.colorbar(
+        ScalarMappable(norm=norm, cmap=CMAP), ax=axes, orientation="horizontal", shrink=0.4, aspect=40
+    )
+    colorbar.set_label(
+        "Change in wall thickness (mm), CGPS10 − CGPS1, per subject (no smoothing; grey = no data, apex left out)"
+    )
     return fig
 
 
