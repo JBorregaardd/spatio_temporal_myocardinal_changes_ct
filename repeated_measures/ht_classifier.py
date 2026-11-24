@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 from pipeline import AORTA_EXCLUSION_MM, load_environment, run_output_dir  # noqa: E402
 
 DATASET = "CGPS1"
-THRESHOLD_MM = 15.0
+THRESHOLD_MM = 9.0
 THICKNESS_COLUMN = "lvm_average_thickness_mm"
 PATIENT_SUMMARY = os.path.join("statistics", "statistics_patient_summary.csv")
 HT_FOLDER = os.path.join("df", "repeated_measures")
