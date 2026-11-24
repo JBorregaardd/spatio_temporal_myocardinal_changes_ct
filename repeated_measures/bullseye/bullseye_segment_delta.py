@@ -10,7 +10,7 @@
 # The runs with 0 mm aortic exclusion are used, e.g. output/CGPS10_0mm. The subjects are linked by <PROJECT_ROOT>/df/CGPS1_CGPS10_links.csv,
 # made by comparative_analysis/compare.py.
 # The figure and the table of the group changes per segment are saved in <PROJECT_ROOT>/reports/figures/repeated_measures.
-# e.g. uv run repeated_measures/bullseye_delta.py
+# e.g. uv run repeated_measures/bullseye/bullseye_segment_delta.py
 #################################################################################################################################################
 
 import os
@@ -27,7 +27,7 @@ import pandas as pd  # noqa: E402
 from matplotlib.cm import ScalarMappable  # noqa: E402
 from matplotlib.colors import Normalize  # noqa: E402
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "LVM_thickness"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "repeated_measures"))
@@ -48,7 +48,7 @@ RINGS = [(0, 6), (6, 12), (12, 16)]
 RADII = np.linspace(0.2, 1, 4)
 APEX_COLOUR = "#d9d9d9"
 CMAP = "RdBu_r"
-FIGURE_NAME = "bullseye_delta_median_thickness"
+FIGURE_NAME = "bullseye_segment_delta_median_thickness"
 
 
 def segment_changes(

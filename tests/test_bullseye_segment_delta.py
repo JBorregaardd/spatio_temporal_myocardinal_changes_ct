@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "repeated_measures"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "repeated_measures" / "bullseye"))
 
-from bullseye_delta import PANELS, SEGMENTS, group_changes, segment_changes  # noqa: E402
+from bullseye_segment_delta import PANELS, SEGMENTS, group_changes, segment_changes  # noqa: E402
 
 
 def _segments(ids: list[str], factor: float) -> pd.DataFrame:

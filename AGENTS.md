@@ -36,9 +36,14 @@
     CGPS1 values, the CGPS10 values and the deltas of the linked subjects are made in one run in R with
     `Rscript repeated_measures/correlation_matrix.R pearson` (or `spearman`; needs the R package `corrplot`). The
     bullseye plots of the change in median wall thickness (%) per AHA segment (1x4: women and men with HT, then
-    without HT; apex greyed out) are made with `uv run repeated_measures/bullseye_delta.py`; it needs the links table,
+    without HT; apex greyed out) are made with `uv run repeated_measures/bullseye/bullseye_segment_delta.py`; it needs the links table,
     `CGPS1_HT.csv` and each dataset's `output/<dataset>_0mm/statistics/statistics_thickness_per_segment.csv` and
-    `statistics_patient_summary.csv`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
+    `statistics_patient_summary.csv`. The change per subject on the mesh itself (CGPS10 rigidly registered onto CGPS1
+    with ICP, CGPS10 thickness moved to the nearest CGPS1 endocardial vertex, difference in mm projected into the CGPS1
+    bullseye; no smoothing, no grouping) is plotted for random subjects with
+    `uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0`; it needs the links table and both
+    datasets' `output/<dataset>_0mm/<id>/` pipeline folders, and saves each subject's difference mesh and the
+    registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
     patient summary measurement is fitted in R (package `nlme`) with
     `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
     subjects without follow-up; needs only `nlme`, which comes with R); it prints and saves the change per HT class and sex, the HT and sex interactions and an
