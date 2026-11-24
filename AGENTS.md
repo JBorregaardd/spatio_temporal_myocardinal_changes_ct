@@ -43,7 +43,9 @@
     bullseye; no smoothing, no grouping) is plotted for random subjects with
     `uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0`; it needs the links table and both
     datasets' `output/<dataset>_0mm/<id>/` pipeline folders, and saves each subject's difference mesh and the
-    registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
+    registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. How far the CGPS1 vertices had to reach for their CGPS10
+    partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
+    summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
     patient summary measurement is fitted in R (package `nlme`) with
     `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
     subjects without follow-up; needs only `nlme`, which comes with R); it prints and saves the change per HT class and sex, the HT and sex interactions and an

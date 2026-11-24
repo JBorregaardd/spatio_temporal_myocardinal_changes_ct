@@ -73,9 +73,9 @@ def segment_changes(
     for dataset, segment_table in segments.items():
         values = segment_table[["patient_id", "segment", STATISTIC]].drop_duplicates(["patient_id", "segment"])
         values = values.rename(columns={STATISTIC: dataset + "_value"})
-        table = table.merge(
-            values, left_on=[dataset, *keys], right_on=["patient_id", *keys], how="inner"
-        ).drop(columns="patient_id")
+        table = table.merge(values, left_on=[dataset, *keys], right_on=["patient_id", *keys], how="inner").drop(
+            columns="patient_id"
+        )
         keys = ["segment"]
 
     sex = pd.Series(pd.NA, index=table.index, dtype="Float64")
@@ -120,7 +120,9 @@ def group_changes(changes: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True)
 
 
-def draw_bullseye(ax: plt.Axes, values: np.ndarray, norm: Normalize, cmap: str, title: str) -> None:
+def draw_bullseye(
+    ax: plt.Axes, values: np.ndarray, norm: Normalize, cmap: str, title: str, label_format: str = "{:+.1f}%"
+) -> None:
     """Draw an AHA 17-segment bullseye of segments 1-16 on a polar axis, with the apex (segment 17) greyed out.
 
     The layout matches ``plot_mean_bullseye`` in ``LVM_thickness/utils/bullseye.py``.
@@ -131,6 +133,7 @@ def draw_bullseye(ax: plt.Axes, values: np.ndarray, norm: Normalize, cmap: str, 
         norm: Colour normalisation shared by all bullseyes.
         cmap: Name of the colormap.
         title: Title of the axis.
+        label_format: Format of the value written in each segment.
     """
     colormap = plt.get_cmap(cmap)
     outline = [pe.withStroke(linewidth=2.5, foreground="white")]
@@ -146,9 +149,17 @@ def draw_bullseye(ax: plt.Axes, values: np.ndarray, norm: Normalize, cmap: str, 
         thetas = np.arange(n) * dtheta + np.pi / 2
         ax.bar(thetas, r_out - r_in, dtheta, r_in, color=colours, edgecolor="k", linewidth=1.5, clip_on=False)
         for theta, value in zip(thetas, ring):
-            label = f"{value:+.1f}%" if np.isfinite(value) else "–"
-            ax.text(theta, (r_in + r_out) / 2, label, ha="center", va="center", fontsize=10, fontweight="bold",
-                    path_effects=outline)
+            label = label_format.format(value) if np.isfinite(value) else "–"
+            ax.text(
+                theta,
+                (r_in + r_out) / 2,
+                label,
+                ha="center",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                path_effects=outline,
+            )
 
     ax.bar(0, RADII[0], 2 * np.pi, 0, color=APEX_COLOUR, edgecolor="none")
     ax.plot(np.linspace(0, 2 * np.pi, 100), np.full(100, RADII[0]), "k", linewidth=1.5)
@@ -175,8 +186,9 @@ def bullseye_figure(summary: pd.DataFrame, vmax: float, cmap: str = CMAP) -> plt
         values = panel["mean_change_pct"].reindex(WALL_SEGMENTS).to_numpy(dtype=float)
         n = int(panel["n"].reindex(WALL_SEGMENTS).max())
         draw_bullseye(ax, values, norm, cmap, f"{SEX_TITLES[sex]} {HT_TITLES[ht]}\n(n = {n})")
-    colorbar = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=axes, orientation="horizontal", shrink=0.4,
-                            aspect=40, pad=0.04)
+    colorbar = fig.colorbar(
+        ScalarMappable(norm=norm, cmap=cmap), ax=axes, orientation="horizontal", shrink=0.4, aspect=40, pad=0.04
+    )
     colorbar.set_label("Mean change in median wall thickness (%), (CGPS10 − CGPS1) / CGPS1")
     fig.suptitle("Change in LV wall thickness per AHA segment from baseline to 10-year follow-up", fontsize=15)
     return fig
