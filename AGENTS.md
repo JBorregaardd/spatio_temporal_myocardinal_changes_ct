@@ -41,7 +41,8 @@
     `statistics_patient_summary.csv`. The change per subject on the mesh itself (CGPS10 rigidly registered onto CGPS1
     with ICP, CGPS10 thickness moved to the nearest CGPS1 endocardial vertex, difference in mm projected into the CGPS1
     bullseye; no smoothing, no grouping) is plotted for random subjects with
-    `uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0`; it needs the links table and both
+    `uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0` (every subject in parallel: add
+    `--all --workers 8`; `--keep-nifti` keeps the projection's NIfTI images); it needs the links table and both
     datasets' `output/<dataset>_0mm/<id>/` pipeline folders, and saves each subject's difference mesh and the
     registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is

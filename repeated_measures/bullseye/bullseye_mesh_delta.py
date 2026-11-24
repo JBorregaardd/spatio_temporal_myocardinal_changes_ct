@@ -6,19 +6,24 @@
 # CGPS10 thickness (surfaces/dist_source.vtk) is then moved onto each CGPS1 endocardial vertex by its nearest registered CGPS10 vertex
 # (no value when that is further than --max-distance-mm away), and the difference is taken per CGPS1 vertex. The difference mesh is
 # projected into the bullseye of the CGPS1 scan with the same code as the per-scan bullseye of the pipeline.
-# Each subject's difference mesh, bullseye points and registration are saved in
+# Each subject's difference mesh (binary VTK), bullseye points and registration are saved in
 # <PROJECT_ROOT>/output/CGPS1_CGPS10_mesh_delta_0mm/<CGPS1 id>_<CGPS10 id>/, and the registration quality of all of them in
-# registration_qc.csv in that run folder. The figure of --n random subjects is saved in
-# <PROJECT_ROOT>/reports/figures/repeated_measures/bullseye.
+# registration_qc.csv in that run folder. The NIfTI images of the projection are made in a temporary folder and deleted, unless
+# --keep-nifti. Saved registrations are reused (unless --overwrite) and the difference mesh is only remade for another
+# --max-distance-mm. Subjects run in parallel with --workers; --all processes every available subject. The figure of --n random
+# subjects is saved in <PROJECT_ROOT>/reports/figures/repeated_measures/bullseye.
 # It needs the links table <PROJECT_ROOT>/df/CGPS1_CGPS10_links.csv (comparative_analysis/compare.py) and the finished pipeline runs
 # with 0 mm aortic exclusion of both datasets, e.g. output/CGPS1_0mm and output/CGPS10_0mm.
 # e.g. uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0
+#      uv run repeated_measures/bullseye/bullseye_mesh_delta.py --all --workers 8
 #################################################################################################################################################
 
 import argparse
 import json
 import os
 import sys
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -80,6 +85,7 @@ class Registration:
         rotation_deg: Rotation angle of ``matrix`` in degrees.
         matched_fraction: Fraction of CGPS1 endocardial vertices with a CGPS10 vertex within the maximum distance.
         median_match_mm: Median distance of the CGPS1 endocardial vertices to their nearest CGPS10 vertex.
+        max_distance_mm: Largest match distance the difference mesh was made with; a different one remakes it.
     """
 
     matrix: list[list[float]]
@@ -88,6 +94,7 @@ class Registration:
     rotation_deg: float
     matched_fraction: float = np.nan
     median_match_mm: float = np.nan
+    max_distance_mm: float = np.nan
 
 
 def mesh_points(mesh: vtk.vtkPolyData) -> np.ndarray:
@@ -248,77 +255,161 @@ def delta_mesh(fixed_dir: Path, moving_dir: Path, registration: Registration, ma
         ("thickness_CGPS10", moved_values),
         ("match_distance_mm", distance),
     ]:
-        array = numpy_to_vtk(values, deep=True)
+        array = numpy_to_vtk(values.astype(np.float32), deep=True)
         array.SetName(name)
         data.AddArray(array)
-    scalars = numpy_to_vtk(delta, deep=True)
+    scalars = numpy_to_vtk(delta.astype(np.float32), deep=True)
     scalars.SetName("delta_mm")
     data.SetScalars(scalars)
     return mesh
 
 
-def polar_delta(fixed_dir: Path, work_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bullseye points of the difference mesh in ``work_dir``, projected with the CGPS1 scan's lv17 frame.
+def polar_delta(fixed_dir: Path, mesh_path: Path, projection_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bullseye points of a difference mesh, projected with the CGPS1 scan's lv17 frame.
 
     The pipeline's projection reads the lv17 model from, and writes its ring image to, the folder it is given, so the
-    CGPS1 lv17 files are linked into ``work_dir`` and an LV label image is rebuilt there from ``inner.nii.gz``.
+    CGPS1 lv17 files are linked into ``projection_dir`` and an LV label image is rebuilt there from ``inner.nii.gz``.
 
     Args:
         fixed_dir: Pipeline output folder of the CGPS1 scan.
-        work_dir: Folder holding ``delta_mesh.vtk``.
+        mesh_path: The difference mesh.
+        projection_dir: Folder for the links and the NIfTI images of the projection.
 
     Returns:
         Angle (radians), radius (normalised so the AHA rings lie at 0.2, 0.47, 0.73 and 1) and change in mm of every
         bullseye point.
     """
-    segmentation_dir = work_dir / "segmentations"
-    segmentation_dir.mkdir(exist_ok=True)
+    (projection_dir / "segmentations").mkdir(parents=True, exist_ok=True)
     for source, target in [
-        (fixed_dir / TRANSFORM_FILE, work_dir / TRANSFORM_FILE),
-        (fixed_dir / LV17_FOLDER, work_dir / LV17_FOLDER),
+        (fixed_dir / TRANSFORM_FILE, projection_dir / TRANSFORM_FILE),
+        (fixed_dir / LV17_FOLDER, projection_dir / LV17_FOLDER),
     ]:
         if not target.exists():
             target.symlink_to(source.resolve())
     inner = sitk.ReadImage(str(fixed_dir / INNER_MASK))
     label = sitk.Cast(inner > 0, sitk.sitkUInt8) * bullseye.LV_ID
-    label_path = work_dir / LABEL_FILE
+    label_path = projection_dir / LABEL_FILE
     sitk.WriteImage(label, str(label_path))
 
     x, y, values = bullseye.generate_polar_values(
-        str(work_dir), str(work_dir / DELTA_MESH), str(label_path), lvm=False, aorta_exclusion_mm=AORTA_EXCLUSION_MM
+        str(projection_dir), str(mesh_path), str(label_path), lvm=False, aorta_exclusion_mm=AORTA_EXCLUSION_MM
     )
     x, y, values = bullseye.fill_holes_in_bullseye(x, y, values, BULLSEYE_GRID, BULLSEYE_NEIGHBOURS)
     radius, theta = utils.cartesian2polar(x, y)
     return theta, radius / (radius.max() + 0.25), values
 
 
-def process_subject(fixed_dir: Path, moving_dir: Path, work_dir: Path, max_distance: float, overwrite: bool) -> dict:
-    """Register, compute the difference mesh and project it for one subject, reusing saved results unless asked not to.
+def write_binary_mesh(mesh: vtk.vtkPolyData, path: Path) -> None:
+    """Write a mesh as a binary legacy VTK file, roughly half the size of the ASCII files of the pipeline."""
+    writer = vtk.vtkPolyDataWriter()
+    writer.SetInputData(mesh)
+    writer.SetFileTypeToBinary()
+    writer.SetFileVersion(42)
+    writer.SetFileName(str(path))
+    if not writer.Write():
+        raise OSError(f"Mesh not written: {path}")
+
+
+def remove_intermediates(work_dir: Path) -> None:
+    """Remove the links and NIfTI images of a projection made directly in ``work_dir`` by an earlier version.
+
+    The links are removed, never what they point to.
+    """
+    for path in [work_dir / TRANSFORM_FILE, work_dir / LV17_FOLDER, work_dir / LABEL_FILE]:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+    segmentation_dir = work_dir / "segmentations"
+    if segmentation_dir.is_dir() and not segmentation_dir.is_symlink():
+        for path in segmentation_dir.glob("*.nii.gz"):
+            path.unlink()
+        if not any(segmentation_dir.iterdir()):
+            segmentation_dir.rmdir()
+
+
+def process_subject(
+    fixed_dir: Path, moving_dir: Path, work_dir: Path, max_distance: float, overwrite: bool, keep_nifti: bool = False
+) -> dict:
+    """Register, compute the difference mesh and project it for one subject, reusing saved results where possible.
+
+    A saved registration is reused unless ``overwrite``; the difference mesh and bullseye points are redone when they
+    are missing or were made with another ``max_distance``.
 
     Args:
         fixed_dir: Pipeline output folder of the CGPS1 scan.
         moving_dir: Pipeline output folder of the CGPS10 scan.
         work_dir: Folder for this subject's results.
         max_distance: Largest vertex match distance in mm.
-        overwrite: Recompute even if the bullseye points are saved.
+        overwrite: Also redo the registration.
+        keep_nifti: Keep the NIfTI images of the projection (``lv_label.nii.gz`` and
+            ``segmentations/mm_delta_mesh_ring.nii.gz``) in ``work_dir``; otherwise they are made in a temporary folder.
 
     Returns:
         The registration as a dictionary, without the matrix.
     """
     polar_path = work_dir / POLAR_FILE
     registration_path = work_dir / REGISTRATION_FILE
-    if not overwrite and polar_path.is_file() and registration_path.is_file():
-        registration = Registration(**json.loads(registration_path.read_text()))
+    saved = None if overwrite or not registration_path.is_file() else json.loads(registration_path.read_text())
+    if saved is not None and polar_path.is_file() and saved.get("max_distance_mm") == max_distance:
+        registration = Registration(**saved)
     else:
         work_dir.mkdir(parents=True, exist_ok=True)
-        registration = register(fixed_dir, moving_dir)
-        utils.write_vtk_mesh(delta_mesh(fixed_dir, moving_dir, registration, max_distance), str(work_dir / DELTA_MESH))
-        registration_path.write_text(json.dumps(asdict(registration), indent=2))
-        theta, radius, values = polar_delta(fixed_dir, work_dir)
+        if saved is None:
+            registration = register(fixed_dir, moving_dir)
+        else:
+            saved.pop("max_distance_mm", None)
+            registration = Registration(**saved)
+        registration.max_distance_mm = max_distance
+        mesh_path = work_dir / DELTA_MESH
+        write_binary_mesh(delta_mesh(fixed_dir, moving_dir, registration, max_distance), mesh_path)
+        if keep_nifti:
+            theta, radius, values = polar_delta(fixed_dir, mesh_path, work_dir)
+        else:
+            with tempfile.TemporaryDirectory(dir=work_dir) as projection_dir:
+                theta, radius, values = polar_delta(fixed_dir, mesh_path, Path(projection_dir))
         np.savez_compressed(polar_path, theta=theta, radius=radius, values=values)
+        registration_path.write_text(json.dumps(asdict(registration), indent=2))
+    if not keep_nifti:
+        remove_intermediates(work_dir)
     summary = asdict(registration)
     summary.pop("matrix")
     return summary
+
+
+def process_subject_safely(
+    cgps1: str,
+    cgps10: str,
+    folders: dict[str, Path],
+    run_folder: Path,
+    max_distance: float,
+    overwrite: bool,
+    keep_nifti: bool,
+) -> dict:
+    """``process_subject`` for one linked subject in a worker process, returning the error instead of raising it.
+
+    Args:
+        cgps1: CGPS1 patient id.
+        cgps10: CGPS10 patient id.
+        folders: Dataset name to its pipeline run folder.
+        run_folder: Run folder of this script.
+        max_distance: Largest vertex match distance in mm.
+        overwrite: Also redo the registration.
+        keep_nifti: Keep the NIfTI images of the projection.
+
+    Returns:
+        ``CGPS1``, ``CGPS10`` and either the registration summary or ``error``.
+    """
+    try:
+        summary = process_subject(
+            folders["CGPS1"] / cgps1,
+            folders["CGPS10"] / cgps10,
+            run_folder / f"{cgps1}_{cgps10}",
+            max_distance,
+            overwrite,
+            keep_nifti,
+        )
+    except Exception as error:
+        return {"CGPS1": cgps1, "CGPS10": cgps10, "error": f"{type(error).__name__}: {error}"}
+    return {"CGPS1": cgps1, "CGPS10": cgps10, **summary}
 
 
 def draw_outline(ax: plt.Axes) -> None:
@@ -426,7 +517,14 @@ def parse_args() -> argparse.Namespace:
         default=MAX_DISTANCE_MM,
         help="Largest distance between matched CGPS1 and CGPS10 vertices.",
     )
-    parser.add_argument("--overwrite", action="store_true", help="Recompute subjects that are already saved.")
+    parser.add_argument("--overwrite", action="store_true", help="Also redo the registration of saved subjects.")
+    parser.add_argument("--workers", type=int, default=1, help="Number of subjects processed in parallel.")
+    parser.add_argument(
+        "--all", action="store_true", help="Process every available subject; the figure still shows --n random ones."
+    )
+    parser.add_argument(
+        "--keep-nifti", action="store_true", help="Keep the NIfTI images of the projection, e.g. to view in 3D."
+    )
     return parser.parse_args()
 
 
@@ -441,27 +539,38 @@ if __name__ == "__main__":
         chosen = subjects[subjects["CGPS1"].isin(args.subjects)]
     else:
         chosen = subjects.sample(n=min(args.n, len(subjects)), random_state=args.seed)
+    to_process = subjects if args.all else chosen
 
     run_folder = Path(run_output_dir(root, RUN_NAME, AORTA_EXCLUSION_MM))
-    polar, rows = {}, []
-    for number, (cgps1, cgps10) in enumerate(chosen[list(DATASETS)].itertuples(index=False), start=1):
-        work_dir = run_folder / f"{cgps1}_{cgps10}"
-        print(f"[{number}/{len(chosen)}] {cgps1} / {cgps10}")
-        try:
-            summary = process_subject(
-                folders["CGPS1"] / cgps1, folders["CGPS10"] / cgps10, work_dir, args.max_distance_mm, args.overwrite
+    pairs = list(to_process[list(DATASETS)].itertuples(index=False, name=None))
+    print(f"Processing {len(pairs)} subjects with {args.workers} worker(s).")
+    settings = (folders, run_folder, args.max_distance_mm, args.overwrite, args.keep_nifti)
+    rows, failed = [], []
+    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+        futures = [executor.submit(process_subject_safely, cgps1, cgps10, *settings) for cgps1, cgps10 in pairs]
+        for number, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            label = f"[{number}/{len(pairs)}] {result['CGPS1']} / {result['CGPS10']}"
+            if "error" in result:
+                failed.append(result)
+                print(f"{label} [WARN] skipped: {result['error']}")
+                continue
+            rows.append(result)
+            print(
+                f"{label}: start {result['start']}, rotation {result['rotation_deg']:.1f} deg, wall distance "
+                f"{result['mean_distance_mm']:.2f} mm, matched {100 * result['matched_fraction']:.0f}%"
             )
-        except Exception as error:
-            print(f"  [WARN] skipped: {error}")
-            continue
-        rows.append({"CGPS1": cgps1, "CGPS10": cgps10, **summary})
-        print(
-            f"  start {summary['start']}, rotation {summary['rotation_deg']:.1f} deg, wall distance "
-            f"{summary['mean_distance_mm']:.2f} mm, matched {100 * summary['matched_fraction']:.0f}%"
-        )
-        polar[f"{cgps1} / {cgps10}"] = dict(np.load(work_dir / POLAR_FILE))
-    if not polar:
+    if failed:
+        print(f"[WARN] {len(failed)} subjects failed: {', '.join(f'{r['CGPS1']}/{r['CGPS10']}' for r in failed)}")
+    if not rows:
         raise SystemExit("No subject could be processed.")
+
+    done = {(row["CGPS1"], row["CGPS10"]) for row in rows}
+    polar = {
+        f"{cgps1} / {cgps10}": dict(np.load(run_folder / f"{cgps1}_{cgps10}" / POLAR_FILE))
+        for cgps1, cgps10 in chosen[list(DATASETS)].itertuples(index=False, name=None)
+        if (cgps1, cgps10) in done
+    }
 
     qc_path = run_folder / QC_FILE
     qc = pd.DataFrame(rows)
@@ -470,6 +579,8 @@ if __name__ == "__main__":
         qc = pd.concat([old, qc]).drop_duplicates(list(DATASETS), keep="last")
     qc.to_csv(qc_path, index=False)
 
+    if not polar:
+        raise SystemExit(f"None of the {len(chosen)} subjects to plot could be processed.")
     values = np.concatenate([points["values"] for points in polar.values()])
     vmax = args.vmax or float(np.nanpercentile(np.abs(values), 98))
     print(f"Colour scale: -{vmax:.1f} to {vmax:.1f} mm")
