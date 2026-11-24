@@ -45,7 +45,9 @@
     datasets' `output/<dataset>_0mm/<id>/` pipeline folders, and saves each subject's difference mesh and the
     registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
-    summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
+    summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. The mesh change is checked
+    against the registration-free segment method (change of each scan's own segment medians; Bland-Altman, correlation
+    and mean difference per segment) with `uv run repeated_measures/bullseye/compare_segment_methods.py`. A linear mixed model, `value ~ time * HT * sex + age_c + (1 | subject)`, of one
     patient summary measurement is fitted in R (package `nlme`) with
     `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
     subjects without follow-up; needs only `nlme`, which comes with R); it prints and saves the change per HT class and sex, the HT and sex interactions and an
