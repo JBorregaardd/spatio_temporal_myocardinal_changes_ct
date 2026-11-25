@@ -75,7 +75,12 @@
     phases, the EF and the best phase's high-res and interpolated grid LV volume). The point in the R-R interval and the
     heart rate of scans are read from the series descriptions in a metadata file with `uv run cfa/scan_phases.py`
     (default: the CGPS10 ED and ES file lists with `META_DATA_FILE`; other scans with `--metadata <csv>
-    --folder NAME=<nifti folder>` or `--filelist NAME=<txt>`), saved in `df/cfa/scan_phases.csv`.
+    --folder NAME=<nifti folder>` or `--filelist NAME=<txt>`), saved in `df/cfa/scan_phases.csv`. Our own conversion of
+    the CGPS10 proxy EF (best phase to ES at ~35% R-R) to the true EF is fitted on CFA-2 with
+    `uv run cfa/ef_calibration.py` (optional `--min-ef 50`; after `volume_curves.py` and `scan_phases.py`, whose CGPS10
+    ES phases weight the CFA-2 rows): it compares the paper's formula with refitted linear, linear + ES phase and
+    EDV/ESV models by grouped cross-validation and saves `performance.csv`, `coefficients.csv` (bootstrap CI),
+    `predictions.csv` and `ef_calibration.png` in `df/cfa/ef_calibration/`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
