@@ -50,7 +50,11 @@
     comparison. Without registration, `uv run repeated_measures/bullseye/bullseye_quarter_distribution.py --n 20` projects
     each scan's thickness into its own bullseye, splits every AHA segment into four quarters (radius half x angle half)
     and plots per subject the change of the percentiles P10-P90 and the Wasserstein distance per quarter (64 cells;
-    table in `output/CGPS1_CGPS10_quarters_0mm/quarter_distribution.csv`). How far the CGPS1 vertices had to reach for their CGPS10
+    table in `output/CGPS1_CGPS10_quarters_0mm/quarter_distribution.csv`). The bias between the mesh and segment
+    methods is diagnosed per segment (a third, registration-free method from the quarter points; correlation of the
+    difference with the size of the change, the unmatched share and the segment's share of the wall) with
+    `uv run repeated_measures/bullseye/diagnose_segment_bias.py --workers 8` (after `compare_segment_methods.py`,
+    `bullseye_quarter_distribution.py --all` and, optionally, `match_distance.py`). How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
     summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. The mesh change is checked
     against the registration-free segment method (change of each scan's own segment medians; Bland-Altman, correlation
