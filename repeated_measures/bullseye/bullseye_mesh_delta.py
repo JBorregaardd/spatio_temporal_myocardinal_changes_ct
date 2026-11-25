@@ -198,20 +198,24 @@ def draw_outline(ax: plt.Axes) -> None:
     ax.plot(np.linspace(0, 2 * np.pi, 100), np.full(100, RADII[0]), "k", linewidth=0.8)
 
 
-def polar_image(points: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def polar_image(
+    points: dict[str, np.ndarray], n_angles: int = IMAGE_ANGLES, n_radii: int = IMAGE_RADII
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Mean value per cell of a regular polar grid, NaN for cells without points and inside the apex ring.
 
-    The cells are a little larger than the spacing of the bullseye points, so every cell inside a covered area holds
-    at least one point and only areas without data stay empty.
+    With the default size the cells are a little larger than the spacing of the bullseye points, so every cell inside
+    a covered area holds at least one point and only areas without data stay empty; coarser grids also work.
 
     Args:
         points: Bullseye points with ``theta`` (radians), ``radius`` (normalised to 1) and ``values``.
+        n_angles: Number of cells around.
+        n_radii: Number of cells from the centre to the edge.
 
     Returns:
         Angle edges, radius edges and the (radius, angle) image of mean values.
     """
-    theta_edges = np.linspace(-np.pi, np.pi, IMAGE_ANGLES + 1)
-    radius_edges = np.linspace(0, 1, IMAGE_RADII + 1)
+    theta_edges = np.linspace(-np.pi, np.pi, n_angles + 1)
+    radius_edges = np.linspace(0, 1, n_radii + 1)
     finite = np.isfinite(points["values"])
     sample = (points["radius"][finite], np.mod(points["theta"][finite] + np.pi, 2 * np.pi) - np.pi)
     sums, _, _ = np.histogram2d(*sample, bins=[radius_edges, theta_edges], weights=points["values"][finite])
@@ -231,7 +235,22 @@ def draw_polar(ax: plt.Axes, points: dict[str, np.ndarray], norm: Normalize, tit
         norm: Colour normalisation.
         title: Title of the axis.
     """
-    theta_edges, radius_edges, image = polar_image(points)
+    draw_image(ax, *polar_image(points), norm, title)
+
+
+def draw_image(
+    ax: plt.Axes, theta_edges: np.ndarray, radius_edges: np.ndarray, image: np.ndarray, norm: Normalize, title: str
+) -> None:
+    """Draw a (radius, angle) image on a polar grid as a bullseye: grey where it is NaN, the apex left white.
+
+    Args:
+        ax: Polar axis to draw on.
+        theta_edges: Angle edges of the cells (radians).
+        radius_edges: Radius edges of the cells (normalised to 1).
+        image: (radius, angle) values.
+        norm: Colour normalisation.
+        title: Title of the axis.
+    """
     ax.bar(0, 1, 2 * np.pi, 0, color=MISSING_COLOUR, edgecolor="none")
     ax.pcolormesh(theta_edges, radius_edges, image, cmap=CMAP, norm=norm, shading="flat", rasterized=True)
     ax.bar(0, RADII[0], 2 * np.pi, 0, color="white", edgecolor="none")

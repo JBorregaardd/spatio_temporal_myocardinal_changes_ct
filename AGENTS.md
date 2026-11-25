@@ -54,7 +54,12 @@
     methods is diagnosed per segment (a third, registration-free method from the quarter points; correlation of the
     difference with the size of the change, the unmatched share and the segment's share of the wall) with
     `uv run repeated_measures/bullseye/diagnose_segment_bias.py --workers 8` (after `compare_segment_methods.py`,
-    `bullseye_quarter_distribution.py --all` and, optionally, `match_distance.py`). How far the CGPS1 vertices had to reach for their CGPS10
+    `bullseye_quarter_distribution.py --all` and, optionally, `match_distance.py`). The group maps (mean and median per
+    cell over the subjects of women and men with and without HT; cells with data in less than `--coverage` of a group
+    are grey) of the smoothed mesh change and of a quarter percentile change are made with
+    `uv run repeated_measures/bullseye/bullseye_group_mean.py --fwhm-mm 10 --coverage 0.5 --percentile 50 --workers 8`
+    (after `bullseye_smooth_delta.py --all --fwhm-mm 10` and `bullseye_quarter_distribution.py --all`; needs
+    `CGPS1_HT.csv` and the patient summaries). How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
     summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. The mesh change is checked
     against the registration-free segment method (change of each scan's own segment medians; Bland-Altman, correlation
