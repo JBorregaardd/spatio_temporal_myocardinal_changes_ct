@@ -38,13 +38,16 @@
     bullseye plots of the change in median wall thickness (%) per AHA segment (1x4: women and men with HT, then
     without HT; apex greyed out) are made with `uv run repeated_measures/bullseye/bullseye_segment_delta.py`; it needs the links table,
     `CGPS1_HT.csv` and each dataset's `output/<dataset>_0mm/statistics/statistics_thickness_per_segment.csv` and
-    `statistics_patient_summary.csv`. The change per subject on the mesh itself (CGPS10 rigidly registered onto CGPS1
-    with ICP, CGPS10 thickness moved to the nearest CGPS1 endocardial vertex, difference in mm projected into the CGPS1
-    bullseye; no smoothing, no grouping) is plotted for random subjects with
-    `uv run repeated_measures/bullseye/bullseye_mesh_delta.py --n 20 --seed 0` (every subject in parallel: add
-    `--all --workers 8`; `--keep-nifti` keeps the projection's NIfTI images); it needs the links table and both
-    datasets' `output/<dataset>_0mm/<id>/` pipeline folders, and saves each subject's difference mesh and the
-    registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/`. How far the CGPS1 vertices had to reach for their CGPS10
+    `statistics_patient_summary.csv`. The change per subject on the mesh itself is made in three steps in
+    `repeated_measures/bullseye/`, which share `--n 20 --seed 0` (the same random subjects), `--subjects`, `--all` and
+    `--workers`: `uv run repeated_measures/bullseye/mesh_delta.py --all --workers 8` registers CGPS10 rigidly onto
+    CGPS1 with ICP, moves the CGPS10 thickness to the nearest CGPS1 endocardial vertex and saves each subject's
+    difference mesh and the registration QC in `output/CGPS1_CGPS10_mesh_delta_0mm/` (needs the links table and both
+    datasets' `output/<dataset>_0mm/<id>/` pipeline folders); `uv run repeated_measures/bullseye/bullseye_mesh_delta.py`
+    projects the raw difference meshes into the CGPS1 bullseye and plots them (`--keep-nifti` keeps the projection's
+    NIfTI images); `uv run repeated_measures/bullseye/bullseye_smooth_delta.py --fwhm-mm 0 5 10 15` smooths the
+    thickness on the mesh with a Gaussian (heat kernel along the wall) and plots one figure per FWHM plus a side-by-side
+    comparison. How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
     summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. The mesh change is checked
     against the registration-free segment method (change of each scan's own segment medians; Bland-Altman, correlation

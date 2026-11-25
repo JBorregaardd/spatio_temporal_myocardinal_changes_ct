@@ -1,5 +1,5 @@
 #################################################################################################################################################
-# This script checks the per-subject change in wall thickness computed on the mesh (bullseye_mesh_delta.py) against the per-segment
+# This script checks the per-subject change in wall thickness computed on the mesh (mesh_delta.py) against the per-segment
 # change of bullseye_segment_delta.py, which needs no registration. Per subject and AHA segment it compares, in mm:
 #   segment_delta_mm:  median CGPS10 thickness in the segment of the CGPS10 17-segment model minus median CGPS1 thickness in the segment
 #                      of the CGPS1 model (thickness.json of each scan, as in statistics_thickness_per_segment.csv),
@@ -9,7 +9,7 @@
 #   vertex_delta_mm:   median of the per-vertex differences of the segment, as drawn in the mesh bullseye.
 # With a correct registration mesh_delta_mm and segment_delta_mm agree; their difference (mesh - segment) shows where they do not.
 # The CGPS1 vertices get their segment as in the pipeline: the nearest point of the CGPS1 surfaces/myocardium_17.vtk.
-# It uses every subject in <PROJECT_ROOT>/output/CGPS1_CGPS10_mesh_delta_0mm/registration_qc.csv, so run bullseye_mesh_delta.py first.
+# It uses every subject in <PROJECT_ROOT>/output/CGPS1_CGPS10_mesh_delta_0mm/registration_qc.csv, so run mesh_delta.py first.
 # The per-subject table is saved in that run folder; the agreement per segment and the figure (scatter, Bland-Altman and the mean
 # difference per segment) in <PROJECT_ROOT>/reports/figures/repeated_measures/bullseye.
 # e.g. uv run repeated_measures/bullseye/compare_segment_methods.py
@@ -32,7 +32,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "measurements"))
 
-from bullseye_mesh_delta import AORTA_EXCLUSION_MM, DELTA_MESH, FIGURE_FOLDER, QC_FILE, RUN_NAME, mesh_points  # noqa: E402
+from bullseye_mesh_delta import FIGURE_FOLDER  # noqa: E402
+from mesh_delta import AORTA_EXCLUSION_MM, DELTA_MESH, QC_FILE, RUN_NAME, mesh_points  # noqa: E402
 from bullseye_segment_delta import WALL_SEGMENTS, draw_bullseye  # noqa: E402
 from match_distance import SEGMENT_MESH, vertex_segments  # noqa: E402
 from pipeline import load_environment, run_output_dir  # noqa: E402
@@ -96,7 +97,7 @@ def subject_comparison(run_folder: Path, folders: dict[str, Path], subjects: pd.
     """Both methods per subject and wall segment for every subject with a difference mesh.
 
     Args:
-        run_folder: Run folder of bullseye_mesh_delta.py.
+        run_folder: Run folder of mesh_delta.py.
         folders: Dataset name to its pipeline run folder.
         subjects: Table with the ids in ``CGPS1`` and ``CGPS10``.
 

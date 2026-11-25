@@ -7,7 +7,7 @@ import SimpleITK as sitk
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "repeated_measures" / "bullseye"))
 
-from bullseye_mesh_delta import apply_matrix, rotation_angle_deg, transfer_thickness, transform_matrix  # noqa: E402
+from mesh_delta import apply_matrix, rotation_angle_deg, transfer_thickness, transform_matrix  # noqa: E402
 
 
 def _rigid(angle_deg: float, translation: tuple[float, float, float]) -> sitk.VersorRigid3DTransform:

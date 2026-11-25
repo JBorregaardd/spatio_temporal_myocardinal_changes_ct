@@ -1,12 +1,12 @@
 #################################################################################################################################################
 # This script measures, per AHA segment, how far the CGPS1 endocardial vertices had to reach for their CGPS10 partner when the wall
-# thickness was moved between the examinations by bullseye_mesh_delta.py. A large match distance means the endocardium moved (e.g. the
+# thickness was moved between the examinations by mesh_delta.py. A large match distance means the endocardium moved (e.g. the
 # wall grew into the cavity) or the registration is off there, so the thickness change of that area is unreliable or missing.
 # Every vertex of each subject's delta_mesh.vtk gets the AHA segment of its nearest point on the CGPS1 surfaces/myocardium_17.vtk (the rule
 # of the pipeline's thickness per segment; -1 is outside the 17-segment model). Per subject and segment it counts the vertices, the median
 # and 95th percentile match distance, the share above --threshold-mm and the share without a match (no CGPS10 vertex within the maximum
-# distance used by bullseye_mesh_delta.py, so no change).
-# It uses every subject listed in <PROJECT_ROOT>/output/CGPS1_CGPS10_mesh_delta_0mm/registration_qc.csv, so run bullseye_mesh_delta.py
+# distance used by mesh_delta.py, so no change).
+# It uses every subject listed in <PROJECT_ROOT>/output/CGPS1_CGPS10_mesh_delta_0mm/registration_qc.csv, so run mesh_delta.py
 # first. The per-subject table is saved in that run folder, and the per-segment summary over subjects and its bullseye figure in
 # <PROJECT_ROOT>/reports/figures/repeated_measures/bullseye.
 # e.g. uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3
@@ -30,14 +30,8 @@ from vtk.util.numpy_support import vtk_to_numpy  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from bullseye_mesh_delta import (  # noqa: E402
-    AORTA_EXCLUSION_MM,
-    DELTA_MESH,
-    FIGURE_FOLDER,
-    QC_FILE,
-    RUN_NAME,
-    mesh_points,
-)
+from bullseye_mesh_delta import FIGURE_FOLDER  # noqa: E402
+from mesh_delta import AORTA_EXCLUSION_MM, DELTA_MESH, QC_FILE, RUN_NAME, mesh_points  # noqa: E402
 from bullseye_segment_delta import WALL_SEGMENTS, draw_bullseye  # noqa: E402
 from pipeline import load_environment, run_output_dir  # noqa: E402
 from spaghetti_plot import DATASETS, read_ids  # noqa: E402
@@ -101,7 +95,7 @@ def subject_table(run_folder: Path, cgps1_folder: Path, subjects: pd.DataFrame, 
     """Match distance statistics per subject and segment of every subject with a difference mesh.
 
     Args:
-        run_folder: Run folder of bullseye_mesh_delta.py.
+        run_folder: Run folder of mesh_delta.py.
         cgps1_folder: Pipeline run folder of CGPS1.
         subjects: Table with the ids in ``CGPS1`` and ``CGPS10``.
         threshold: Distance in mm above which a match counts as far.
