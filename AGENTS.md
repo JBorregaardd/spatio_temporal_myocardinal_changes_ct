@@ -68,6 +68,14 @@
     `Rscript repeated_measures/LMM.R --measurement lvm_average_thickness_mm` (add `--dropouts` to also use the CGPS1
     subjects without follow-up; needs only `nlme`, which comes with R); it prints and saves the change per HT class and sex, the HT and sex interactions and an
     ANCOVA (`CGPS10 ~ CGPS1 + HT * sex + age_c`) as sensitivity analysis in `df/repeated_measures/LMM_<measurement>_*.csv`.
+* The multiphase CFA-2 scans (20 phases 0-95% of the R-R interval plus the scanner's high-res best phase, in `CFA_DIR`
+    in `.env`, default `/storage/DTU-CFA-2_v2`) live in `cfa/`. `uv run cfa/volume_curves.py --workers 8` measures the
+    chamber volumes of every phase from the TotalSegmentator heartchambers_highres segmentations and saves
+    `df/cfa/volume_curves.csv` (one row per scan) and `df/cfa/patient_curves.csv` (EDV/ESV as max/min LV volume, their
+    phases, the EF and the best phase's high-res and interpolated grid LV volume). The point in the R-R interval and the
+    heart rate of scans are read from the series descriptions in a metadata file with `uv run cfa/scan_phases.py`
+    (default: the CGPS10 ED and ES file lists with `META_DATA_FILE`; other scans with `--metadata <csv>
+    --folder NAME=<nifti folder>` or `--filelist NAME=<txt>`), saved in `df/cfa/scan_phases.csv`.
 * The project uses `pre-commit` for managing pre-commit hooks. To run all hooks on all files, use
     `uv run pre-commit run --all-files`. For more information, refer to the `.pre-commit-config.yaml` file.
 
