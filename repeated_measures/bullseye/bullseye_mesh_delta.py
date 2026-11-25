@@ -59,7 +59,7 @@ FIGURE_FOLDER = os.path.join(OUTPUT_FOLDER, "bullseye")
 COLOURBAR_LABEL = "Change in wall thickness (mm), CGPS10 − CGPS1, per subject (grey = no data, apex left out)"
 
 
-def _project(fixed_dir: Path, mesh: vtk.vtkPolyData, projection_dir: Path) -> dict[str, np.ndarray]:
+def _project(fixed_dir: Path, mesh: vtk.vtkPolyData, projection_dir: Path, fill: bool) -> dict[str, np.ndarray]:
     """Project the active scalars of a CGPS1 mesh into the bullseye, writing the projection's files to a folder.
 
     The pipeline's projection reads the lv17 model from, and writes its ring image to, the folder it is given, so the
@@ -81,27 +81,32 @@ def _project(fixed_dir: Path, mesh: vtk.vtkPolyData, projection_dir: Path) -> di
     x, y, values = bullseye.generate_polar_values(
         str(projection_dir), str(mesh_path), str(label_path), lvm=False, aorta_exclusion_mm=AORTA_EXCLUSION_MM
     )
-    x, y, values = bullseye.fill_holes_in_bullseye(x, y, values, BULLSEYE_GRID, BULLSEYE_NEIGHBOURS)
-    radius, theta = utils.cartesian2polar(x, y)
-    return {"theta": theta, "radius": radius / (radius.max() + 0.25), "values": values}
+    if fill:
+        x, y, values = bullseye.fill_holes_in_bullseye(x, y, values, BULLSEYE_GRID, BULLSEYE_NEIGHBOURS)
+    radius, theta = utils.cartesian2polar(np.asarray(x), np.asarray(y))
+    return {"theta": theta, "radius": radius / (radius.max() + 0.25), "values": np.asarray(values)}
 
 
-def project_mesh(fixed_dir: Path, mesh: vtk.vtkPolyData, keep_dir: Path | None = None) -> dict[str, np.ndarray]:
-    """Bullseye points of the active scalars of a CGPS1 mesh, projected with the CGPS1 scan's lv17 frame.
+def project_mesh(
+    fixed_dir: Path, mesh: vtk.vtkPolyData, keep_dir: Path | None = None, fill: bool = True
+) -> dict[str, np.ndarray]:
+    """Bullseye points of the active scalars of a mesh, projected with the lv17 frame of the scan it belongs to.
 
     Args:
-        fixed_dir: Pipeline output folder of the CGPS1 scan.
-        mesh: Mesh on the CGPS1 endocardium whose active scalars are projected.
+        fixed_dir: Pipeline output folder of the scan whose endocardium the mesh is (CGPS1 for difference meshes).
+        mesh: Mesh on that scan's endocardium whose active scalars are projected.
         keep_dir: Folder to keep the projection's links and NIfTI images in; None uses a temporary folder.
+        fill: Resample onto the regular bullseye grid, filling small holes (median of the nearest points), as for the
+            plots; False returns the projected ring voxels themselves, one measurement each.
 
     Returns:
         ``theta`` (radians), ``radius`` (normalised so the AHA rings lie at 0.2, 0.47, 0.73 and 1) and ``values`` of
         every bullseye point.
     """
     if keep_dir is not None:
-        return _project(fixed_dir, mesh, keep_dir)
+        return _project(fixed_dir, mesh, keep_dir, fill)
     with tempfile.TemporaryDirectory() as projection_dir:
-        return _project(fixed_dir, mesh, Path(projection_dir))
+        return _project(fixed_dir, mesh, Path(projection_dir), fill)
 
 
 def remove_intermediates(work_dir: Path) -> None:

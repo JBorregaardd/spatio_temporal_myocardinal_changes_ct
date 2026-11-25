@@ -47,7 +47,10 @@
     projects the raw difference meshes into the CGPS1 bullseye and plots them (`--keep-nifti` keeps the projection's
     NIfTI images); `uv run repeated_measures/bullseye/bullseye_smooth_delta.py --fwhm-mm 0 5 10 15` smooths the
     thickness on the mesh with a Gaussian (heat kernel along the wall) and plots one figure per FWHM plus a side-by-side
-    comparison. How far the CGPS1 vertices had to reach for their CGPS10
+    comparison. Without registration, `uv run repeated_measures/bullseye/bullseye_quarter_distribution.py --n 20` projects
+    each scan's thickness into its own bullseye, splits every AHA segment into four quarters (radius half x angle half)
+    and plots per subject the change of the percentiles P10-P90 and the Wasserstein distance per quarter (64 cells;
+    table in `output/CGPS1_CGPS10_quarters_0mm/quarter_distribution.csv`). How far the CGPS1 vertices had to reach for their CGPS10
     partner per AHA segment (share above a threshold and share unmatched, over the subjects processed so far) is
     summarised with `uv run repeated_measures/bullseye/match_distance.py --threshold-mm 3`. The mesh change is checked
     against the registration-free segment method (change of each scan's own segment medians; Bland-Altman, correlation

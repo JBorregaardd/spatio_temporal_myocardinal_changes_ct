@@ -1,5 +1,5 @@
 #################################################################################################################################################
-# This script computes the change in LV wall thickness (CGPS10 - CGPS1, in mm) of single subjects on the mesh. 
+# This script computes the change in LV wall thickness (CGPS10 - CGPS1, in mm) of single subjects on the mesh.
 # For each subject the CGPS10 wall (surfaces/myocardium.vtk) is rigidly registered onto the CGPS1 wall with ICP, started both from the raw
 # scanner frames and from the long-axis alignment of the two lv17 transforms, keeping the start with the smallest residual. The
 # CGPS10 thickness (surfaces/dist_source.vtk) is then moved onto each CGPS1 endocardial vertex by its nearest registered CGPS10 vertex
